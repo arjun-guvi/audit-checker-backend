@@ -6,7 +6,7 @@ import (
 	"github.com/gocraft/work"
 )
 
-type context struct{}
+type jobContext struct{}
 
 func HelloWorld(job *work.Job) error {
 	fmt.Println("Hello World")

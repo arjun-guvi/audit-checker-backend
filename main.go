@@ -17,6 +17,7 @@ func main() {
 	config.LoadEnv()
 
 	workerMode := flag.Bool("worker", false, "Run in worker mode (background job processor)")
+	sapWorkerMode := flag.Bool("sap-worker", false, "Run SAP reminder worker (checks every 30 minutes)")
 	flag.Parse()
 
 	// Setup Redis pool
@@ -38,17 +39,28 @@ func main() {
 		},
 	}
 
+	// Connect to MongoDB
+	if err := config.ConnectMongo(); err != nil {
+		log.Fatalf("Failed to connect to MongoDB: %v", err)
+	}
+	defer config.DisconnectMongo()
+
+	// Worker mode for Redis-based background jobs
 	if *workerMode {
-		log.Println("Starting worker...")
+		log.Println("Starting Redis worker...")
 		worker.StartWorker(redisPool, "audit_worker")
 		return
 	}
 
-	// Connect to MongoDB
-	// if err := config.ConnectMongo(); err != nil {
-	// 	log.Fatalf("Failed to connect to MongoDB: %v", err)
-	// }
-	// defer config.DisconnectMongo()
+	// SAP Worker mode for 30-minute reminder checks
+	if *sapWorkerMode {
+		log.Println("Starting SAP reminder worker...")
+		sapWorker := worker.NewSAPWorker()
+		if err := sapWorker.Start(); err != nil {
+			log.Fatalf("SAP worker error: %v", err)
+		}
+		return
+	}
 
 	// HTTP server mode (default)
 	log.Printf("Starting HTTP server on port %s...", config.Port)

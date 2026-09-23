@@ -65,3 +65,8 @@ func getEnv(key, fallback string) string {
 	}
 	return value
 }
+
+// GetEnv is the exported version of getEnv for use by other packages
+func GetEnv(key, fallback string) string {
+	return getEnv(key, fallback)
+}

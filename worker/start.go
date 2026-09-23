@@ -12,7 +12,7 @@ import (
 )
 
 func StartWorker(redisPool *redis.Pool, namespace string) {
-	var ctx context
+	var ctx jobContext
 
 	pool := work.NewWorkerPool(
 		ctx,
