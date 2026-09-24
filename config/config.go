@@ -16,6 +16,7 @@ var (
 	MongoURI      string
 	MongoDatabase string
 	Port          string
+	JWTSecret     string
 	MongoClient   *mongo.Client
 	MongoDB       *mongo.Database
 )
@@ -31,6 +32,7 @@ func LoadEnv() {
 	MongoURI = getEnv("MONGO_URI", "mongodb://localhost:27017")
 	MongoDatabase = getEnv("MONGO_DATABASE", "audit_app")
 	Port = getEnv("PORT", "8080")
+	JWTSecret = getEnv("JWT_SECRET", "my_secret_key_change_in_production")
 }
 
 func ConnectMongo() error {

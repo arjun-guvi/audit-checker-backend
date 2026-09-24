@@ -1,15 +1,28 @@
 package routes
 
 import (
+	"auditApp/config"
 	"auditApp/controller"
+	"auditApp/middleware"
 
 	"github.com/gin-gonic/gin"
 )
 
 // SetupRoutes initializes all routes for the application
 func SetupRoutes(router *gin.Engine) {
+	// Initialize controllers
+	authController := controller.NewAuthController(config.MongoDB)
 	// Health check
 	router.GET("/health", controller.HealthCheck)
+
+	// Authentication routes
+	router.POST("/register", authController.Register)
+	router.POST("/login", authController.Login)
+	protected := router.Group("/")
+	protected.Use(middleware.AuthMiddleware(config.MongoDB))
+	{
+		protected.GET("/me", authController.Me)
+	}
 
 	// SAP routes
 	sap := router.Group("/sap")
