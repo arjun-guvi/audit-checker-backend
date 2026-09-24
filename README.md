@@ -36,26 +36,33 @@ go mod download
 cp .env.example .env              # or export the variables in section 2
 go run main.go                    # HTTP server on 127.0.0.1:$PORT
 go run main.go -worker            # Redis worker: Sales Audit sweeps + mail delivery
+go run main.go -with-worker       # both in one process (the Docker default)
 ```
 
 ### Docker / Render
 
-The `Dockerfile` builds one image for all three processes; the arguments choose which one runs.
+The `Dockerfile` builds one image; the arguments choose what runs. By default (`-with-worker`) one
+container runs the HTTP server **and** the Redis worker.
 
 ```bash
 docker build -t audit-app .
-docker run --env-file .env -p 8080:8080 audit-app               # HTTP server
-docker run --env-file .env audit-app -worker                     # Redis worker
+docker run --env-file .env -p 8080:8080 audit-app               # HTTP server + worker (default)
+docker run --env-file .env -p 8080:8080 audit-app ""             # HTTP server only
+docker run --env-file .env audit-app -worker                     # worker only
 ```
 
 On Render, create from this repo (runtime **Docker**) and add the section 2 variables under
-*Environment* (`.env` is not copied into the image):
+*Environment* (`.env` is not copied into the image). Then pick one setup:
 
-- **Web Service** for the API. Health check path: `/health`. Render sets `PORT`.
-- **Background Worker** with Docker Command `/app/audit-app -worker`, for the job sweeps and mails
-  (without it, mails are queued but never sent).
-- `REDIS_HOST` must be a Redis reachable from Render (e.g. Render Key Value, `host:port`), and
-  MongoDB Atlas must allow Render's outbound IPs.
+- **One service (default):** a **Web Service** with no Docker Command override. Health check path
+  `/health`; Render sets `PORT`. The worker runs inside it, so the sweeps stop while the service
+  is asleep (free instances sleep when idle).
+- **Two services:** a **Web Service** with Docker Command `/app/audit-app` (API only) plus a
+  **Background Worker** with Docker Command `/app/audit-app -worker`. The API service needs no worker
+  of its own (workers sharing one Redis split the jobs, so an extra one is harmless but unneeded).
+
+Either way, `REDIS_HOST` must be a Redis reachable from Render (e.g. Render Key Value, `host:port`),
+and MongoDB Atlas must allow Render's outbound IPs.
 
 Indexes (safe to run more than once):
 

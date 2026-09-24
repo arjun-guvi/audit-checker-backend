@@ -24,5 +24,8 @@ EXPOSE 8080
 
 USER app
 ENTRYPOINT ["/app/audit-app"]
-# Default is the HTTP server. Override with "-worker" or "-sap-worker" for the background workers.
-CMD []
+# Default: HTTP server and Redis worker in one container (a single Render Web Service).
+# To run them as separate services instead, override the command:
+#   API only:    /app/audit-app
+#   worker only: /app/audit-app -worker
+CMD ["-with-worker"]

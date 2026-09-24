@@ -13,21 +13,14 @@ import (
 	"github.com/gocraft/work"
 )
 
-// The payment verification sweep runs every 10 minutes (second minute hour day month weekday).
-const paymentVerificationSweepSchedule = "0 */10 * * * *"
-
 // PaymentVerificationPendingAfterSeconds is how long a payment may stay unverified before the
 // learner is mailed.
 const PaymentVerificationPendingAfterSeconds = 24 * 60 * 60
 
-// registerPaymentVerificationJobs schedules the sweep and registers its handler. Mails go
-// through the Sales Audit mail job, so the queue is set up by registerSalesAuditJobs.
-func registerPaymentVerificationJobs(pool *work.WorkerPool) {
-	pool.PeriodicallyEnqueue(paymentVerificationSweepSchedule, models.PAYMENT_VERIFICATION_SWEEP_JOB)
-	pool.Job(models.PAYMENT_VERIFICATION_SWEEP_JOB, PaymentVerificationSweepJob)
-}
-
+// PaymentVerificationSweepJob is scheduled every 10 minutes in StartWorker. Its mails are
+// delivered by the Sales Audit mail job (SendMailJob).
 func PaymentVerificationSweepJob(job *work.Job) error {
+	log.Printf("paymentVerification: sweep started")
 	sent, err := RunPaymentVerificationSweep(context.Background(), config.SalesAuditProgram)
 	log.Printf("paymentVerification: sweep sent %d mail(s)", sent)
 	return err
@@ -41,6 +34,7 @@ func RunPaymentVerificationSweep(ctx context.Context, program string) (int, erro
 		return 0, err
 	}
 	if len(leads) == 0 {
+		log.Printf("paymentVerification: no leads left to mail")
 		return 0, nil
 	}
 
@@ -52,6 +46,7 @@ func RunPaymentVerificationSweep(ctx context.Context, program string) (int, erro
 	if err != nil {
 		return 0, err
 	}
+	log.Printf("paymentVerification: checking %d lead(s) not yet mailed, %d payment(s)", len(leads), len(payments))
 	paymentsByEmail := map[string][]models.ZohoPayment{}
 	for _, payment := range payments {
 		email := strings.ToLower(payment.Email)
@@ -71,6 +66,7 @@ func RunPaymentVerificationSweep(ctx context.Context, program string) (int, erro
 		if err := SetPaymentVerificationMailedAt(ctx, lead.ID, mail.SentAt); err != nil {
 			return sent, fmt.Errorf("marking lead %s mailed: %w", lead.ID, err)
 		}
+		log.Printf("paymentVerification: mailed %s about an unverified payment", lead.Email)
 		sent++
 	}
 	return sent, nil

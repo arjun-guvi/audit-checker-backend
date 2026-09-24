@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"log"
+	"os"
 
 	"auditApp/config"
 	"auditApp/routes"
@@ -21,6 +22,7 @@ func main() {
 
 	workerMode := flag.Bool("worker", false, "Run in worker mode (background job processor)")
 	sapWorkerMode := flag.Bool("sap-worker", false, "Run SAP reminder worker (checks every 30 minutes)")
+	withWorker := flag.Bool("with-worker", false, "Run the HTTP server and the Redis worker in one process")
 	flag.Parse()
 
 	// Setup Redis pool
@@ -67,6 +69,18 @@ func main() {
 			log.Fatalf("SAP worker error: %v", err)
 		}
 		return
+	}
+
+	// HTTP server with the worker alongside, for hosts running a single service. The worker owns
+	// SIGINT/SIGTERM: once it has stopped and its running jobs have finished, the process exits.
+	if *withWorker {
+		log.Println("Starting Redis worker alongside the HTTP server...")
+		go func() {
+			worker.StartWorker(redisPool, workerNamespace)
+			log.Println("Worker stopped, shutting down")
+			config.DisconnectMongo()
+			os.Exit(0)
+		}()
 	}
 
 	// HTTP server mode (default)
