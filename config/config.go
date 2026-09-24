@@ -17,8 +17,18 @@ var (
 	MongoDatabase string
 	Port          string
 	JWTSecret     string
-	MongoClient   *mongo.Client
-	MongoDB       *mongo.Database
+
+	// Sales Audit
+	SalesAuditProgram string
+	AccountsEmail     string
+	SMTPHost          string
+	SMTPPort          string
+	SMTPUsername      string
+	SMTPPassword      string
+	SMTPFrom          string
+
+	MongoClient *mongo.Client
+	MongoDB     *mongo.Database
 )
 
 func LoadEnv() {
@@ -33,6 +43,15 @@ func LoadEnv() {
 	MongoDatabase = getEnv("MONGO_DATABASE", "audit_app")
 	Port = getEnv("PORT", "8080")
 	JWTSecret = getEnv("JWT_SECRET", "my_secret_key_change_in_production")
+
+	SalesAuditProgram = getEnv("SALES_AUDIT_PROGRAM", "guvi")
+	AccountsEmail = getEnv("ACCOUNTS_EMAIL", "")
+	// Leave SMTP_HOST empty to log Sales Audit mails without sending them
+	SMTPHost = getEnv("SMTP_HOST", "")
+	SMTPPort = getEnv("SMTP_PORT", "587")
+	SMTPUsername = getEnv("SMTP_USERNAME", "")
+	SMTPPassword = getEnv("SMTP_PASSWORD", "")
+	SMTPFrom = getEnv("SMTP_FROM", "")
 }
 
 func ConnectMongo() error {

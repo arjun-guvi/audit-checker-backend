@@ -5,9 +5,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"auditApp/config"
 	"auditApp/models"
-	salesaudit "auditApp/salesAudit"
 
 	"github.com/gocraft/work"
 	"github.com/gomodule/redigo/redis"
@@ -32,7 +30,7 @@ func StartWorker(redisPool *redis.Pool, namespace string) {
 	pool.Job(models.HELLO_WORLD_JOB, HelloWorld)
 
 	// Sales Audit sweeps and mail delivery
-	salesaudit.RegisterJobs(pool, config.MongoDB, redisPool, namespace)
+	registerSalesAuditJobs(pool, redisPool, namespace)
 
 	pool.Start()
 

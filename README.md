@@ -5,8 +5,10 @@ from Zoho Creator, and stores what the audit team adds on top: verify decisions,
 CC answers and a log of every alert mail. Scheduled jobs chase stuck leads and open rechecks by
 mail.
 
-The feature lives in [`salesAudit/`](salesAudit) and follows the Zen build rules (RULES.MD). The
-older JWT auth and `/sap` CRUD code in this repo are unchanged and unrelated to it.
+The feature is written as plain functions in the repo's existing packages (`config`, `models`,
+`middleware`, `controller`, `routes`, `worker`), in the same style as the `/sap` code: Mongo is
+reached through `config.MongoDB`. Its files are prefixed `sales_audit`. The older JWT auth and
+`/sap` CRUD code are unrelated to it.
 
 ---
 
@@ -19,7 +21,7 @@ older JWT auth and `/sap` CRUD code in this repo are unchanged and unrelated to 
 5. [Background jobs and mail](#5-background-jobs-and-mail)
 6. [Project structure](#6-project-structure)
 7. [Tests](#7-tests)
-8. [Changes outside the feature folder](#8-changes-outside-the-feature-folder)
+8. [Changes to existing code](#8-changes-to-existing-code)
 9. [Known gaps](#9-known-gaps)
 10. [Legacy endpoints](#10-legacy-endpoints)
 
@@ -39,13 +41,13 @@ go run main.go -worker            # Redis worker: Sales Audit sweeps + mail deli
 Indexes (safe to run more than once):
 
 ```bash
-mongosh "$MONGO_URI/$MONGO_DATABASE" salesAudit/scripts/indexes.js
+mongosh "$MONGO_URI/$MONGO_DATABASE" scripts/sales_audit_indexes.js
 ```
 
 Fake data for a **dev database only** (replaces its previous seed on each run; no real PII):
 
 ```bash
-mongosh "mongodb://localhost:27017/audit_app_dev" salesAudit/scripts/seed.js
+mongosh "mongodb://localhost:27017/audit_app_dev" scripts/sales_audit_seed.js
 ```
 
 Run the frontend against it: in `AuditorClient`, copy `.env.example` to `.env.local` and
@@ -107,7 +109,7 @@ Imported from Zoho Creator; this service only reads them and adds indexes.
 | `DiscountData` | `Learner_Email_ID` = lead `Email` | "Discount approved" check |
 
 Zoho dates come in several layouts (`15-Sep-2026 15:22:19`, `19-Sep-2026`, `2026-09-24`, ISO); they
-are read as IST unless they carry a zone (`core/format.go`).
+are read as IST unless they carry a zone (`worker/sales_audit_format.go`).
 
 ### Feature collections
 
@@ -138,36 +140,51 @@ SMTP is down (its `delivery` then reads `failed` or `skipped`).
 ## 6. Project structure
 
 ```
-salesAudit/
-  salesaudit.go   wiring: RegisterRoutes / RegisterJobs, env settings
-  models/         Zoho read structs, feature documents, API response shapes, constants
-  core/           pure logic: date parsing, credits, escalation / reminder rules, Zoho → API mapping
-  store/          Store interface, Mongo implementation (only package touching Mongo), in-memory fake
-  service/        shared operations for handlers and jobs (build leads, log + queue mail, sweeps)
-  controllers/    Gin handlers (Handlers built with New(service))
-  routes/         Register(engine, …): mock auth, permission per route
-  worker/         Register(pool, …): sweeps and mail job; SMTP mailer
-  scripts/        indexes.js, seed.js
+config/config.go                  SALES_AUDIT_PROGRAM, ACCOUNTS_EMAIL, SMTP_* settings
+models/sales_audit.go             collection names, permissions, enums, feature documents
+models/sales_audit_zoho.go        read structs for the Zoho collections (Zoho field names)
+models/sales_audit_api.go         response shapes the frontend reads
+models/worker.go                  job names (SALES_AUDIT_*_JOB)
+middleware/sales_audit.go         SalesAuditAuth (mock auth), RequirePermission
+controller/sales_audit.go         one handler function per endpoint
+routes/routes.go                  /sales-audit group, permission per route
+worker/sales_audit_db.go          every Mongo read/write (the Zoho collections are only read)
+worker/sales_audit_leads.go       shared operations: build leads, schedule, discount, log + queue mail
+worker/sales_audit_jobs.go        hourly sweeps, mail job, SMTP delivery, job registration
+worker/sales_audit_format.go      pure: Zoho date parsing, formatting, UUIDs
+worker/sales_audit_rules.go       pure: escalation / reminder rules, recipients, subjects
+worker/sales_audit_mapping.go     pure: Zoho -> API mapping, audit sources
+scripts/sales_audit_indexes.js    indexes (idempotent)
+scripts/sales_audit_seed.js       fake data for a dev database
 ```
+
+The shared operations live in `worker` because both the handlers and the jobs use them, and
+`controller` already imports `worker` (as the `/sap` code does).
 
 ## 7. Tests
 
 ```bash
-go test ./salesAudit/...     # handler tests on the in-memory store, core rules, jobs
-go vet ./salesAudit/...
-gofmt -l salesAudit
+go test ./...                                              # pure rules and mapping
+TEST_MONGO_URI=mongodb://localhost:27017 go test ./...     # + every endpoint and job
+go vet ./...
 ```
 
-No database or Redis is needed for the tests.
+The endpoint tests (`controller/sales_audit_test.go`) and job tests
+(`worker/sales_audit_jobs_test.go`) run the real routes and queries against a throwaway database
+that each test creates and drops; they skip when `TEST_MONGO_URI` is not set. Mail queueing, SMTP
+and the clock are replaced in tests.
 
-## 8. Changes outside the feature folder
+## 8. Changes to existing code
 
-- `main.go` — `workerNamespace` constant; passes the Redis pool and namespace to `SetupRoutes`.
-- `routes/routes.go` — `SetupRoutes(router, redisPool, workerNamespace)` mounts
-  `salesaudit.RegisterRoutes`.
-- `worker/start.go` — `salesaudit.RegisterJobs` on the worker pool.
-- `go.mod` — `go 1.25` (was 1.26.4, which RULES.MD does not allow); `golang.org/x/*` pinned to
+- `main.go`: `workerNamespace` constant; passes the Redis pool and namespace to `SetupRoutes`.
+- `config/config.go`: Sales Audit and SMTP settings.
+- `models/worker.go`: Sales Audit job names.
+- `routes/routes.go`: `SetupRoutes(router, redisPool, workerNamespace)` mounts `/sales-audit`.
+- `worker/start.go`: registers the Sales Audit jobs on the worker pool.
+- `go.mod`: `go 1.25` (was 1.26.4, which RULES.MD does not allow); `golang.org/x/*` pinned to
   versions that build on Go 1.25.
+- Removed: the committed macOS binaries `audit-app` and `tmp/main`, and the empty
+  `models/models.go` and `worker/worker.go`.
 
 ## 9. Known gaps
 

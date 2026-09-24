@@ -27,6 +27,7 @@ go.work
 *~
 
 # Compiled binary
+/audit-app
 tmp/
 *.tmp
 

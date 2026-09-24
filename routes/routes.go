@@ -4,7 +4,8 @@ import (
 	"auditApp/config"
 	"auditApp/controller"
 	"auditApp/middleware"
-	salesaudit "auditApp/salesAudit"
+	"auditApp/models"
+	"auditApp/worker"
 
 	"github.com/gin-gonic/gin"
 	"github.com/gomodule/redigo/redis"
@@ -44,6 +45,27 @@ func SetupRoutes(router *gin.Engine, redisPool *redis.Pool, workerNamespace stri
 		sap.POST("/:id/deactivate", controller.SAPDeactivate)
 	}
 
-	// Sales Audit feature (/sales-audit/...)
-	salesaudit.RegisterRoutes(router, config.MongoDB, redisPool, workerNamespace)
+	// Sales Audit routes; mails are queued for the worker on workerNamespace
+	worker.SetupSalesAuditQueue(redisPool, workerNamespace)
+	view := middleware.RequirePermission(models.PermissionView)
+	edit := middleware.RequirePermission(models.PermissionEdit)
+	salesAudit := router.Group("/sales-audit", middleware.SalesAuditAuth())
+	{
+		salesAudit.GET("/leads", view, controller.GetLeads)
+		salesAudit.GET("/leads/summaries", view, controller.GetLeadSummaries)
+		salesAudit.POST("/leads/:leadId/send-reminder", edit, controller.SendReminder)
+		salesAudit.POST("/leads/:leadId/cc-response", edit, controller.UpdateCcResponse)
+		salesAudit.GET("/leads/:leadId/audit", view, controller.GetLeadAudit)
+		salesAudit.POST("/leads/:leadId/mark-audited", edit, controller.MarkAudited)
+
+		salesAudit.GET("/rechecks", view, controller.GetRechecks)
+		salesAudit.POST("/rechecks", edit, controller.RaiseRecheck)
+		salesAudit.POST("/rechecks/:recheckId/resolve", edit, controller.ResolveRecheck)
+
+		salesAudit.GET("/audit-history", view, controller.GetAuditHistory)
+
+		salesAudit.GET("/students/:studentId", view, controller.GetStudent)
+		salesAudit.GET("/students/:studentId/payments", view, controller.GetStudentPayments)
+		salesAudit.GET("/students/:studentId/cc-verification", view, controller.GetCcVerification)
+	}
 }
