@@ -6,10 +6,14 @@ const (
 	CONCURRENT_TASKS = 10
 
 	// Job names
-	HELLO_WORLD_JOB = "hello_world_job"
+	HELLO_WORLD_JOB         = "hello_world_job"
+	ZOHO_LEARNER_IMPORT_JOB = "zoho_learner_import_job"
 
 	// Sales Audit jobs
 	SALES_AUDIT_ESCALATION_SWEEP_JOB       = "salesAudit_sap_escalation_sweep"
 	SALES_AUDIT_RECHECK_REMINDER_SWEEP_JOB = "salesAudit_recheck_reminder_sweep"
 	SALES_AUDIT_SEND_MAIL_JOB              = "salesAudit_send_mail"
+
+	// Payment verification jobs
+	PAYMENT_VERIFICATION_SWEEP_JOB = "payment_verification_sweep"
 )

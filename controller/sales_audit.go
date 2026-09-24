@@ -460,3 +460,14 @@ func GetCcVerification(c *gin.Context) {
 		PointsCovered:          extract.PointsCovered,
 	})
 }
+
+// RunPaymentVerificationSweep: POST /payment-verification/run-sweep. Runs the sweep the worker
+// runs every 10 minutes, for testing the mail flow: the due learners are mailed and marked.
+func RunPaymentVerificationSweep(c *gin.Context) {
+	sent, err := worker.RunPaymentVerificationSweep(c, program(c))
+	if err != nil {
+		respondServerError(c, err)
+		return
+	}
+	respondOK(c, gin.H{"sent": sent})
+}

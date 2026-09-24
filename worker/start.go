@@ -25,12 +25,17 @@ func StartWorker(redisPool *redis.Pool, namespace string) {
 	//     *      *     *   *    *      *
 	//  Second Minute Hour Day Month day(week)
 	pool.PeriodicallyEnqueue("0 */2 * * * *", models.HELLO_WORLD_JOB)
+	pool.PeriodicallyEnqueue("0 */1 * * * *", models.ZOHO_LEARNER_IMPORT_JOB)
 
 	// Register job handlers
 	pool.Job(models.HELLO_WORLD_JOB, HelloWorld)
+	pool.Job(models.ZOHO_LEARNER_IMPORT_JOB, ZohoLearnerImportJob)
 
 	// Sales Audit sweeps and mail delivery
 	registerSalesAuditJobs(pool, redisPool, namespace)
+
+	// Payment verification mails to learners (every 10 minutes)
+	registerPaymentVerificationJobs(pool)
 
 	pool.Start()
 

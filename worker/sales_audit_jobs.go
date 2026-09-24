@@ -134,7 +134,7 @@ func SendSalesAuditMail(ctx context.Context, program, alertID string) error {
 	if len(alert.To) == 0 {
 		return SetAlertDelivery(ctx, program, alertID, models.DeliverySkipped)
 	}
-	if err := deliverMail(alert.To, alert.Subject, salesAuditMailBody(alert.Subject)); err != nil {
+	if err := deliverMail(alert.To, alert.Subject, mailBody(alert)); err != nil {
 		if markErr := SetAlertDelivery(ctx, program, alertID, models.DeliveryFailed); markErr != nil {
 			log.Printf("salesAudit: marking mail %s failed: %v", alertID, markErr)
 		}
@@ -156,6 +156,14 @@ var deliverMail = func(to []string, subject, htmlBody string) error {
 		htmlBody
 	auth := smtp.PlainAuth("", config.SMTPUsername, config.SMTPPassword, config.SMTPHost)
 	return smtp.SendMail(config.SMTPHost+":"+config.SMTPPort, auth, config.SMTPFrom, to, []byte(message))
+}
+
+// mailBody picks the body by alert kind: learner mails differ from the internal alerts.
+func mailBody(alert models.Alert) string {
+	if alert.Kind == models.AlertPaymentVerificationPending {
+		return paymentVerificationMailBody(alert)
+	}
+	return salesAuditMailBody(alert.Subject)
 }
 
 func salesAuditMailBody(subject string) string {

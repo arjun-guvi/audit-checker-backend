@@ -25,22 +25,26 @@ func main() {
 
 	// Setup Redis pool
 	redisPool := &redis.Pool{
-		MaxActive: 5,
-		MaxIdle:   5,
-		Dial: func() (redis.Conn, error) {
-			conn, err := redis.Dial("tcp", config.RedisHost)
-			if err != nil {
-				return nil, err
-			}
-			if config.RedisPassword != "" {
-				if _, err := conn.Do("AUTH", config.RedisPassword); err != nil {
-					conn.Close()
-					return nil, err
-				}
-			}
-			return conn, nil
-		},
-	}
+    MaxActive: 20,
+    MaxIdle:   10,
+    Wait:      true,
+
+    Dial: func() (redis.Conn, error) {
+        conn, err := redis.Dial("tcp", config.RedisHost)
+        if err != nil {
+            return nil, err
+        }
+
+        if config.RedisPassword != "" {
+            if _, err := conn.Do("AUTH", config.RedisPassword); err != nil {
+                conn.Close()
+                return nil, err
+            }
+        }
+
+        return conn, nil
+    },
+}
 
 	// Connect to MongoDB
 	if err := config.ConnectMongo(); err != nil {

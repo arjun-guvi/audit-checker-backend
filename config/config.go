@@ -27,6 +27,12 @@ var (
 	SMTPPassword      string
 	SMTPFrom          string
 
+	// Zoho Creator learner import
+	ZohoAPIURL       string
+	ZohoAPIPublicKey string
+	ZohoAPIFrom      string
+	ZohoAPITo        string
+
 	MongoClient *mongo.Client
 	MongoDB     *mongo.Database
 )
@@ -52,6 +58,10 @@ func LoadEnv() {
 	SMTPUsername = getEnv("SMTP_USERNAME", "")
 	SMTPPassword = getEnv("SMTP_PASSWORD", "")
 	SMTPFrom = getEnv("SMTP_FROM", "")
+	ZohoAPIURL = getEnv("ZOHO_API_URL", "https://www.zohoapis.in/creator/custom/teamzen_guvi/Zen_Learner_Data")
+	ZohoAPIPublicKey = getEnv("ZOHO_API_PUBLIC_KEY", "e1zYtwCnPOKTjDH6R57F8hRCm")
+	ZohoAPIFrom = getEnv("ZOHO_API_FROM", "20-Sep-2026")
+	ZohoAPITo = getEnv("ZOHO_API_TO", "24-Sep-2026")
 }
 
 func ConnectMongo() error {

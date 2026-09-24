@@ -27,12 +27,17 @@ type ZohoLead struct {
 	ModeOfStudy                   string `bson:"Mode_of_Study"`
 	PreferredLanguage             string `bson:"Preferred_Language"`
 	AddedTime                     string `bson:"Added_Time"`
+
+	// PaymentVerificationMailedAt is when the learner was mailed that a payment is still
+	// unverified (Unix seconds); 0 when never. Written by the payment verification sweep.
+	PaymentVerificationMailedAt int64 `bson:"Payment_Verification_Mailed_At"`
 }
 
 // ZohoPayment is one paymentData (Financial_Details) record. All_Enrolment holds the lead's zen_id.
 type ZohoPayment struct {
 	ID                   string `bson:"ID"`
 	ZenID                string `bson:"Zen_ID"`
+	Email                string `bson:"Email"`
 	AllEnrolment         string `bson:"All_Enrolment"`
 	PaymentType          string `bson:"Payment_Type"`
 	ModeOfPayment        string `bson:"Mode_Of_Payment"`

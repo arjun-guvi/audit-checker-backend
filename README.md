@@ -65,6 +65,9 @@ Run the frontend against it: in `AuditorClient`, copy `.env.example` to `.env.lo
 | `SALES_AUDIT_PROGRAM` | `guvi` | `program` set by the mock auth middleware and used by the jobs |
 | `ACCOUNTS_EMAIL` | – | Accounts address copied on "payment pending over 24h" mails |
 | `SMTP_HOST`, `SMTP_PORT` (`587`), `SMTP_USERNAME`, `SMTP_PASSWORD`, `SMTP_FROM` | – | Mail delivery. When unset, mails are still logged (and shown in the UI) but marked `skipped` |
+| `ZOHO_API_URL` | `https://www.zohoapis.in/creator/custom/teamzen_guvi/Zen_Learner_Data` | Zoho learner endpoint |
+| `ZOHO_API_PUBLIC_KEY` | – | Public key sent to Zoho; required by the learner import |
+| `ZOHO_API_FROM`, `ZOHO_API_TO` | `01-Jan-2026`, `05-Jan-2026` | Date range sent to Zoho on each import |
 | `JWT_SECRET` | – | Legacy `/me` auth only |
 
 Never commit `.env`.
@@ -133,6 +136,8 @@ Jobs use the existing gocraft/work Redis pool (`worker/start.go`, namespace `aud
 | `salesAudit_sap_escalation_sweep` | Hourly | Leads over 24h in SAP with an unverified or mismatched payment, not mailed in the last 24h → mail BDA + Accounts |
 | `salesAudit_recheck_reminder_sweep` | Hourly | Rechecks open 24h since raised or last reminded → mail BDA + BDM, set `lastReminder` |
 | `salesAudit_send_mail` | Enqueued by the API and sweeps | Sends one logged alert over SMTP and records its `delivery` |
+| `zoho_learner_import_job` | Every 15 minutes | Fetches the configured Zoho learner date range and upserts `LeadData`, `paymentData`, and `PartialReminders` |
+| `payment_verification_sweep` | Every 10 minutes | Learners with a payment unverified for over 24h and not mailed yet → mail the learner, set `LeadData.Payment_Verification_Mailed_At`. Run it on demand with `POST /sales-audit/payment-verification/run-sweep` |
 
 A mail is logged in `salesAuditAlerts` first and then queued, so the UI shows it even if Redis or
 SMTP is down (its `delivery` then reads `failed` or `skipped`).

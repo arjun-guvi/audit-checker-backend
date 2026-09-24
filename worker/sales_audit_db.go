@@ -55,6 +55,12 @@ func updateOne(ctx context.Context, collection string, filter bson.M, set bson.M
 	return err
 }
 
+func upsertOne(ctx context.Context, collection string, filter bson.M, set bson.M) error {
+	_, err := config.MongoDB.Collection(collection).UpdateOne(ctx, filter,
+		bson.M{"$set": set}, options.Update().SetUpsert(true))
+	return err
+}
+
 // Zoho (read-only)
 
 func FindAuditLeads(ctx context.Context) ([]models.ZohoLead, error) {
@@ -94,6 +100,29 @@ func FindDiscounts(ctx context.Context, email string) ([]models.ZohoDiscount, er
 	return findAll[models.ZohoDiscount](ctx, models.ZohoDiscountsCollection, notDeleted(bson.M{
 		"Learner_Email_ID": bson.M{"$regex": "^" + regexp.QuoteMeta(email) + "$", "$options": "i"},
 	}))
+}
+
+// Payment verification (the lead fields below are written by this feature, not by Zoho)
+
+// FindLeadsNotMailedForPaymentVerification returns the leads with an email whose learner has not
+// yet been mailed about an unverified payment.
+func FindLeadsNotMailedForPaymentVerification(ctx context.Context) ([]models.ZohoLead, error) {
+	return findAll[models.ZohoLead](ctx, models.ZohoLeadsCollection, notDeleted(bson.M{
+		"Email":                          bson.M{"$nin": []any{"", nil}},
+		"Payment_Verification_Mailed_At": bson.M{"$in": []any{0, nil}},
+	}))
+}
+
+// FindPaymentsByEmail returns the payments of the given learner emails (as the Zoho import
+// stores them, lower case).
+func FindPaymentsByEmail(ctx context.Context, emails []string) ([]models.ZohoPayment, error) {
+	return findAll[models.ZohoPayment](ctx, models.ZohoPaymentsCollection,
+		notDeleted(bson.M{"Email": bson.M{"$in": emails}}))
+}
+
+func SetPaymentVerificationMailedAt(ctx context.Context, leadID string, mailedAt int64) error {
+	return updateOne(ctx, models.ZohoLeadsCollection, notDeleted(bson.M{"ID": leadID}),
+		bson.M{"Payment_Verification_Mailed_At": mailedAt})
 }
 
 // Alerts (mail log)

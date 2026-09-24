@@ -64,6 +64,8 @@ const (
 	AlertRecheck         = "recheck"
 	AlertRecheckReminder = "recheckReminder"
 	AlertCcNotSent       = "ccNotSent"
+
+	AlertPaymentVerificationPending = "paymentVerificationPending"
 )
 
 const (
