@@ -1,8 +1,10 @@
 package controller
 
 import (
+	"errors"
 	"log"
 	"net/http"
+	netmail "net/mail"
 	"strconv"
 	"strings"
 	"time"
@@ -473,7 +475,8 @@ func GetCcVerification(c *gin.Context) {
 }
 
 // RunPaymentVerificationSweep: POST /payment-verification/run-sweep. Runs the sweep the worker
-// runs every 10 minutes, for testing the mail flow: the due learners are mailed and marked.
+// runs every 10 minutes, for testing the mail flow: the BDMs of the due leads are mailed and the
+// leads marked.
 func RunPaymentVerificationSweep(c *gin.Context) {
 	sent, err := worker.RunPaymentVerificationSweep(c, program(c))
 	if err != nil {
@@ -481,4 +484,32 @@ func RunPaymentVerificationSweep(c *gin.Context) {
 		return
 	}
 	respondOK(c, gin.H{"sent": sent})
+}
+
+// SendTestMail: POST /test-mail {"to": "someone@example.com"}. Sends one mail straight over SMTP
+// to check the settings; an SMTP failure is returned with its message.
+func SendTestMail(c *gin.Context) {
+	var body struct {
+		To string `json:"to"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		respondError(c, http.StatusBadRequest, "to is required")
+		return
+	}
+	address, err := netmail.ParseAddress(strings.TrimSpace(body.To))
+	if err != nil {
+		respondError(c, http.StatusBadRequest, "to must be a valid email address")
+		return
+	}
+	err = worker.SendTestMail(address.Address)
+	if errors.Is(err, worker.ErrSMTPNotConfigured) {
+		respondError(c, http.StatusServiceUnavailable, err.Error())
+		return
+	}
+	if err != nil {
+		log.Printf("salesAudit: test mail to %s failed: %v", address.Address, err)
+		respondError(c, http.StatusBadGateway, "Sending failed: "+err.Error())
+		return
+	}
+	respondOK(c, gin.H{"sent": true, "to": address.Address})
 }

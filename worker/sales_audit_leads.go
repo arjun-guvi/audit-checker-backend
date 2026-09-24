@@ -226,7 +226,7 @@ func SendAlert(ctx context.Context, program, by, leadID, kind, trigger string, t
 	return mail, nil
 }
 
-// Escalate mails the lead's BDA and Accounts that payment verification is pending.
+// Escalate mails the lead's BDA, BDM and Accounts that payment verification is pending.
 func Escalate(ctx context.Context, program, by string, lead models.Lead, trigger string) (models.Mail, error) {
 	return SendAlert(ctx, program, by, lead.ID, models.AlertEscalation, trigger,
 		EscalationRecipients(lead, config.AccountsEmail), EscalationSubject(lead.StudentFullName))

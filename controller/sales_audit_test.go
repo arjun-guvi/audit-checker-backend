@@ -270,7 +270,7 @@ func TestSendReminder(t *testing.T) {
 	code, body := call(t, engine, http.MethodPost, "/sales-audit/leads/L1/send-reminder", nil)
 	expect(t, code, body, http.StatusOK)
 	mail := decode[models.Mail](t, body.Data)
-	if mail.Trigger != models.TriggerManual || len(mail.To) != 2 || mail.To[1] != "accounts@example.com" {
+	if mail.Trigger != models.TriggerManual || len(mail.To) != 3 || mail.To[1] != "managera@example.com" || mail.To[2] != "accounts@example.com" {
 		t.Errorf("mail = %+v", mail)
 	}
 	alerts := find[models.Alert](t, models.AlertsCollection)
@@ -469,4 +469,16 @@ func TestStudentPages(t *testing.T) {
 		payments[0].LeadID != "L1" || payments[1].VerifiedAt == nil || payments[1].VerifiedDate != "22-Sep-2026" {
 		t.Errorf("payments = %+v", payments)
 	}
+}
+
+func TestSendTestMail(t *testing.T) {
+	useTestDB(t)
+	engine := newRouter()
+
+	code, body := call(t, engine, http.MethodPost, "/sales-audit/test-mail", map[string]string{"to": "not-an-email"})
+	expect(t, code, body, http.StatusBadRequest)
+
+	// The tests run without SMTP settings, so a valid address reports that instead of sending.
+	code, body = call(t, engine, http.MethodPost, "/sales-audit/test-mail", map[string]string{"to": "me@example.com"})
+	expect(t, code, body, http.StatusServiceUnavailable)
 }

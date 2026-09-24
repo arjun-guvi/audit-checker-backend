@@ -1,6 +1,7 @@
 package worker
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -196,5 +197,33 @@ func TestInstallmentsAlignWithSplit(t *testing.T) {
 	}
 	if got := ZohoSource(BuildLead(models.ZohoLead{}, nil, nil, LeadState{}), models.ZohoLead{}, nil).Payment.Installments; got != nil {
 		t.Errorf("no split and no schedule should give no installments: %+v", got)
+	}
+}
+
+func TestEscalationMailBody(t *testing.T) {
+	const now = int64(2_000_000_000)
+	lead := models.Lead{
+		StudentFullName: "Learner <One>", Course: "Full Stack", PaymentType: "Full Payment",
+		SaleOwner: "Asha - bda@example.com", SaleOwnerManager: "Ravi - bdm@example.com",
+		SapEnteredAt: now - 50*3600,
+		Credits: models.Credits{
+			BookingAmount: &models.Credit{Amount: "5000.00", Verified: "Yes"},
+			Part1:         &models.Credit{Amount: "20000.00", Verified: "Mismatch"},
+		},
+	}
+	body := escalationMailBody(lead, now)
+	for _, want := range []string{
+		"Learner &lt;One&gt;", "2 days 2 hours", "Full Stack", "₹5000", "Verified", "₹20000", "Mismatch",
+		"Ravi - bdm@example.com", "BDM: follow up",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("body is missing %q:\n%s", want, body)
+		}
+	}
+	if strings.Contains(body, "Remaining balance") {
+		t.Error("unpaid credits should not be listed")
+	}
+	if got := EscalationRecipients(lead, "accounts@example.com"); len(got) != 3 || got[1] != "bdm@example.com" {
+		t.Errorf("recipients = %v, want BDA, BDM and Accounts", got)
 	}
 }

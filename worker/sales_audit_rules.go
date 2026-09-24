@@ -10,7 +10,7 @@ import (
 // Business rules, kept in step with the frontend (utils/leadStatus.js, mocks/mailSimulator.js).
 
 // EscalationAfterSeconds is how long a lead may sit in Sales Action Pending with an unverified or
-// mismatched payment before the BDA and Accounts are mailed.
+// mismatched payment before the BDA, BDM and Accounts are mailed.
 const EscalationAfterSeconds = 24 * 60 * 60
 
 // RemailAfterSeconds is the gap between repeat escalation and recheck reminder mails.
@@ -99,7 +99,7 @@ func IsEmiPaymentType(paymentType string) bool {
 // Mail recipients.
 
 func EscalationRecipients(lead models.Lead, accountsEmail string) []string {
-	return nonEmpty(ContactEmail(lead.SaleOwner), accountsEmail)
+	return nonEmpty(ContactEmail(lead.SaleOwner), ContactEmail(lead.SaleOwnerManager), accountsEmail)
 }
 
 func BdaAndBdmRecipients(lead models.Lead) []string {
@@ -123,7 +123,7 @@ func nonEmpty(values ...string) []string {
 // Mail subjects, as the frontend shows them.
 
 func EscalationSubject(name string) string {
-	return "Payment verification pending over 24h: " + name
+	return "Sales Action Pending over 24h, payment not verified: " + name
 }
 
 func RecheckSubject(category, name string) string {

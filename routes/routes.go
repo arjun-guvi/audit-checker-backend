@@ -69,6 +69,9 @@ func SetupRoutes(router *gin.Engine, redisPool *redis.Pool, workerNamespace stri
 		// Runs the payment verification mail sweep now (the worker runs it every 10 minutes)
 		salesAudit.POST("/payment-verification/run-sweep", edit, controller.RunPaymentVerificationSweep)
 
+		// Sends one mail straight over SMTP to check the mail settings
+		salesAudit.POST("/test-mail", edit, controller.SendTestMail)
+
 		salesAudit.GET("/students/:studentId", view, controller.GetStudent)
 		salesAudit.GET("/students/:studentId/payments", view, controller.GetStudentPayments)
 		salesAudit.GET("/students/:studentId/cc-verification", view, controller.GetCcVerification)

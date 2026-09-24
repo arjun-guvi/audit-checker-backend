@@ -76,7 +76,7 @@ func TestEscalationSweepMailsOncePer24h(t *testing.T) {
 	at := time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC)
 	queued := useTestDB(t, &at)
 	insertDocs(t, models.ZohoLeadsCollection, true,
-		models.ZohoLead{ID: "L1", ZenID: "Z1", Stage: "Audit", StudentFullName: "Overdue", SaleOwner: "BDA - bda@example.com", AddedTime: "20-Sep-2026 10:00:00"},
+		models.ZohoLead{ID: "L1", ZenID: "Z1", Stage: "Audit", StudentFullName: "Overdue", SaleOwner: "BDA - bda@example.com", SaleOwnerManager: "BDM - bdm@example.com", AddedTime: "20-Sep-2026 10:00:00"},
 		models.ZohoLead{ID: "L2", ZenID: "Z2", Stage: "Audit", StudentFullName: "Fresh", AddedTime: "24-Sep-2026 17:00:00"},
 		models.ZohoLead{ID: "L3", ZenID: "Z3", Stage: "Audit", StudentFullName: "Clean", AddedTime: "20-Sep-2026 10:00:00"},
 	)
@@ -95,7 +95,8 @@ func TestEscalationSweepMailsOncePer24h(t *testing.T) {
 		t.Fatalf("alerts = %+v (%v)", alerts, err)
 	}
 	if alert := alerts[0]; alert.LeadID != "L1" || alert.Trigger != models.TriggerAuto ||
-		alert.To[0] != "bda@example.com" || alert.To[1] != "accounts@example.com" || len(*queued) != 1 {
+		len(alert.To) != 3 || alert.To[0] != "bda@example.com" || alert.To[1] != "bdm@example.com" ||
+		alert.To[2] != "accounts@example.com" || len(*queued) != 1 {
 		t.Errorf("alert = %+v", alert)
 	}
 
@@ -190,5 +191,36 @@ func TestSendSalesAuditMail(t *testing.T) {
 
 	if err := SendSalesAuditMail(ctx, testProgram, "missing"); err != nil {
 		t.Errorf("missing alert should be dropped, got %v", err)
+	}
+}
+
+func TestSendTestMail(t *testing.T) {
+	smtpSettings := []*string{&config.SMTPHost, &config.SMTPUsername, &config.SMTPPassword, &config.SMTPFrom}
+	deliver := deliverMail
+	t.Cleanup(func() {
+		deliverMail = deliver
+		for _, setting := range smtpSettings {
+			*setting = ""
+		}
+	})
+	var sentTo []string
+	var sendErr error
+	deliverMail = func(to []string, subject, htmlBody string) error {
+		sentTo = to
+		return sendErr
+	}
+
+	if err := SendTestMail("me@example.com"); !errors.Is(err, ErrSMTPNotConfigured) || sentTo != nil {
+		t.Errorf("unconfigured SMTP: err %v, sent to %v", err, sentTo)
+	}
+	for _, setting := range smtpSettings {
+		*setting = "set"
+	}
+	if err := SendTestMail("me@example.com"); err != nil || len(sentTo) != 1 || sentTo[0] != "me@example.com" {
+		t.Errorf("configured SMTP: err %v, sent to %v", err, sentTo)
+	}
+	sendErr = errors.New("535 authentication failed")
+	if err := SendTestMail("me@example.com"); err != sendErr {
+		t.Errorf("failing SMTP: err %v, want the SMTP error", err)
 	}
 }
