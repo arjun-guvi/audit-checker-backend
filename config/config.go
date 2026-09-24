@@ -15,6 +15,7 @@ var (
 	RedisPassword string
 	MongoURI      string
 	MongoDatabase string
+	Host          string
 	Port          string
 	JWTSecret     string
 
@@ -47,8 +48,10 @@ func LoadEnv() {
 	RedisPassword = getEnv("REDIS_PASSWORD", "")
 	MongoURI = getEnv("MONGO_URI", "mongodb://localhost:27017")
 	MongoDatabase = getEnv("MONGO_DATABASE", "audit_app")
+	// Containers must listen on 0.0.0.0; the default keeps local runs off the network
+	Host = getEnv("HOST", "127.0.0.1")
 	Port = getEnv("PORT", "8080")
-	JWTSecret = getEnv("JWT_SECRET", "my_secret_key_change_in_production")
+	JWTSecret = getEnv("JWT_SECRET", "")
 
 	SalesAuditProgram = getEnv("SALES_AUDIT_PROGRAM", "guvi")
 	AccountsEmail = getEnv("ACCOUNTS_EMAIL", "")
@@ -59,9 +62,14 @@ func LoadEnv() {
 	SMTPPassword = getEnv("SMTP_PASSWORD", "")
 	SMTPFrom = getEnv("SMTP_FROM", "")
 	ZohoAPIURL = getEnv("ZOHO_API_URL", "https://www.zohoapis.in/creator/custom/teamzen_guvi/Zen_Learner_Data")
-	ZohoAPIPublicKey = getEnv("ZOHO_API_PUBLIC_KEY", "e1zYtwCnPOKTjDH6R57F8hRCm")
+	ZohoAPIPublicKey = getEnv("ZOHO_API_PUBLIC_KEY", "")
 	ZohoAPIFrom = getEnv("ZOHO_API_FROM", "20-Sep-2026")
 	ZohoAPITo = getEnv("ZOHO_API_TO", "24-Sep-2026")
+
+	// Secrets have no fallback: a missing one must fail loudly, not run with a known value
+	if JWTSecret == "" {
+		log.Fatal("JWT_SECRET is not set")
+	}
 }
 
 func ConnectMongo() error {
@@ -79,7 +87,7 @@ func ConnectMongo() error {
 	MongoClient = client
 	MongoDB = client.Database(MongoDatabase)
 
-	log.Printf("Connected to MongoDB: %s", MongoURI)
+	log.Printf("Connected to MongoDB database %q", MongoDatabase)
 	return nil
 }
 

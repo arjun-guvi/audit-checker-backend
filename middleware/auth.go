@@ -14,8 +14,6 @@ import (
 	"go.mongodb.org/mongo-driver/mongo"
 )
 
-var jwtKey = []byte(config.JWTSecret)
-
 // Claims defines the structure of our JWT claims
 type Claims struct {
 	UserID   primitive.ObjectID `json:"user_id"`
@@ -46,7 +44,7 @@ func AuthMiddleware(mongoDB *mongo.Database) gin.HandlerFunc {
 		// Parse the token
 		claims := &Claims{}
 		token, err := jwt.ParseWithClaims(tokenString, claims, func(token *jwt.Token) (interface{}, error) {
-			return jwtKey, nil
+			return []byte(config.JWTSecret), nil
 		})
 
 		if err != nil || !token.Valid {

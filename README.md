@@ -38,6 +38,25 @@ go run main.go                    # HTTP server on 127.0.0.1:$PORT
 go run main.go -worker            # Redis worker: Sales Audit sweeps + mail delivery
 ```
 
+### Docker / Render
+
+The `Dockerfile` builds one image for all three processes; the arguments choose which one runs.
+
+```bash
+docker build -t audit-app .
+docker run --env-file .env -p 8080:8080 audit-app               # HTTP server
+docker run --env-file .env audit-app -worker                     # Redis worker
+```
+
+On Render, create from this repo (runtime **Docker**) and add the section 2 variables under
+*Environment* (`.env` is not copied into the image):
+
+- **Web Service** for the API. Health check path: `/health`. Render sets `PORT`.
+- **Background Worker** with Docker Command `/app/audit-app -worker`, for the job sweeps and mails
+  (without it, mails are queued but never sent).
+- `REDIS_HOST` must be a Redis reachable from Render (e.g. Render Key Value, `host:port`), and
+  MongoDB Atlas must allow Render's outbound IPs.
+
 Indexes (safe to run more than once):
 
 ```bash
@@ -57,7 +76,8 @@ Run the frontend against it: in `AuditorClient`, copy `.env.example` to `.env.lo
 
 | Variable | Default | Used for |
 |---|---|---|
-| `PORT` | `8080` | HTTP port |
+| `HOST` | `127.0.0.1` | Interface the HTTP server listens on; `0.0.0.0` in containers (the Dockerfile sets it) |
+| `PORT` | `8080` | HTTP port (Render sets it) |
 | `MONGO_URI` | `mongodb://localhost:27017` | MongoDB connection |
 | `MONGO_DATABASE` | `audit_app` | Database holding the Zoho and `salesAudit*` collections |
 | `REDIS_HOST` | `localhost:6379` | Job queue |
@@ -67,10 +87,11 @@ Run the frontend against it: in `AuditorClient`, copy `.env.example` to `.env.lo
 | `SMTP_HOST`, `SMTP_PORT` (`587`), `SMTP_USERNAME`, `SMTP_PASSWORD`, `SMTP_FROM` | – | Mail delivery. When unset, mails are still logged (and shown in the UI) but marked `skipped` |
 | `ZOHO_API_URL` | `https://www.zohoapis.in/creator/custom/teamzen_guvi/Zen_Learner_Data` | Zoho learner endpoint |
 | `ZOHO_API_PUBLIC_KEY` | – | Public key sent to Zoho; required by the learner import |
-| `ZOHO_API_FROM`, `ZOHO_API_TO` | `01-Jan-2026`, `05-Jan-2026` | Date range sent to Zoho on each import |
-| `JWT_SECRET` | – | Legacy `/me` auth only |
+| `ZOHO_API_FROM`, `ZOHO_API_TO` | `20-Sep-2026`, `24-Sep-2026` | Date range sent to Zoho on each import |
+| `JWT_SECRET` | – | **Required**; the server refuses to start without it. Signs legacy `/login` tokens. Generate with `openssl rand -hex 32` |
 
-Never commit `.env`.
+Never commit `.env`. Secrets have no defaults in code: set them in `.env` locally and as environment
+variables on the host.
 
 ## 3. API
 

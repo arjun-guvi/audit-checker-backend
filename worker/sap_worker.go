@@ -38,7 +38,7 @@ func NewSAPWorker() *SAPWorker {
 // Start begins the SAP worker with 30 minute interval checks
 func (w *SAPWorker) Start() error {
 	// Load SMTP configuration from environment
-	w.smtpHost = config.GetEnv("SMTP_HOST", "smtp.gmail.com")
+	w.smtpHost = config.GetEnv("SMTP_HOST", "")
 	w.smtpPort = config.GetEnv("SMTP_PORT", "587")
 	w.smtpUsername = config.GetEnv("SMTP_USERNAME", "")
 	w.smtpPassword = config.GetEnv("SMTP_PASSWORD", "")

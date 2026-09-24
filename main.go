@@ -73,5 +73,5 @@ func main() {
 	log.Printf("Starting HTTP server on port %s...", config.Port)
 	router := gin.Default()
 	routes.SetupRoutes(router, redisPool, workerNamespace)
-	router.Run("127.0.0.1:" + config.Port)
+	router.Run(config.Host + ":" + config.Port)
 }

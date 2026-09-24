@@ -17,8 +17,6 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-var jwtKey = []byte(config.JWTSecret)
-
 // AuthController handles authentication requests
 type AuthController struct {
 	DB *mongo.Database
@@ -127,7 +125,7 @@ func (ac *AuthController) Login(c *gin.Context) {
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	tokenString, err := token.SignedString(jwtKey)
+	tokenString, err := token.SignedString([]byte(config.JWTSecret))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error generating token"})
 		return
