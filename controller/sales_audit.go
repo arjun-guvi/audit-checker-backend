@@ -59,6 +59,16 @@ func loadLead(c *gin.Context, param string) (models.Lead, models.ZohoLead, bool)
 	return lead, zohoLead, true
 }
 
+// GetCurrentUser: GET /me
+func GetCurrentUser(c *gin.Context) {
+	user, err := worker.ResolveUser(c, authUser(c))
+	if err != nil {
+		respondServerError(c, err)
+		return
+	}
+	respondOK(c, user)
+}
+
 // GetLeads: GET /leads
 func GetLeads(c *gin.Context) {
 	leads, err := worker.FindLeads(c, program(c))
@@ -458,6 +468,7 @@ func GetCcVerification(c *gin.Context) {
 		System:                 worker.ZohoSource(lead, zohoLead, schedule),
 		Scraped:                extract.Scraped,
 		PointsCovered:          extract.PointsCovered,
+		PdfURL:                 lead.ConfirmationCallLink,
 	})
 }
 

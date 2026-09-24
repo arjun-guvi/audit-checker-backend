@@ -113,6 +113,7 @@ func ToPayment(payment models.ZohoPayment, leadID string) models.Payment {
 		Amount:        payment.Amount,
 		PaymentDate:   DisplayDate(payment.PaymentDate),
 		Verified:      payment.Verified,
+		VerifiedDate:  DisplayDate(payment.VerifiedOn),
 		Course:        payment.EnrolmentCourse,
 		CourseValue:   payment.EnrolmentCourseValue,
 		Type:          payment.Type,

@@ -51,6 +51,8 @@ func SetupRoutes(router *gin.Engine, redisPool *redis.Pool, workerNamespace stri
 	edit := middleware.RequirePermission(models.PermissionEdit)
 	salesAudit := router.Group("/sales-audit", middleware.SalesAuditAuth())
 	{
+		salesAudit.GET("/me", controller.GetCurrentUser)
+
 		salesAudit.GET("/leads", view, controller.GetLeads)
 		salesAudit.GET("/leads/summaries", view, controller.GetLeadSummaries)
 		salesAudit.POST("/leads/:leadId/send-reminder", edit, controller.SendReminder)

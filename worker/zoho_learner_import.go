@@ -68,7 +68,7 @@ type zohoLearner struct {
 	SuperleapID           zohoValue                  `json:"superleapId"`
 	PaymentType           zohoValue                  `json:"paymenttype"`
 	Status                zohoValue                  `json:"status"`
-	ZenId                 zohoValue                  `json:"zenID"`
+	ZenId                 zohoValue                  `json:"zenId"`
 }
 
 type zohoFinancialDetail struct {
@@ -262,7 +262,7 @@ func upsertZohoLearner(ctx context.Context, learner zohoLearner) error {
 	}
 
 	// Keep SuperleapID as a secondary/reference field.
-	zenID := learner.SuperleapID.String()
+	// zenID := learner.SuperleapID.String()
 
 	// ---------------------------------------------------------
 	// Lead
@@ -270,7 +270,7 @@ func upsertZohoLearner(ctx context.Context, learner zohoLearner) error {
 
 	lead := bson.M{
 		"ID":                        email,
-		"zen_id":                    zenID,
+		"zenId":                     learner.ZenId,
 		"Stage":                     "Audit",
 		"Student_Full_Name":         learner.Name.String(),
 		"Email":                     email,
@@ -327,8 +327,8 @@ func upsertZohoLearner(ctx context.Context, learner zohoLearner) error {
 		doc := bson.M{
 			"ID":              id,
 			"Email":           email,
-			"Zen_ID":          zenID,
-			"All_Enrolment":   zenID,
+			"Zen_ID":          learner.ZenId,
+			"All_Enrolment":   learner.ZenId,
 			"Type":            payment.Type.String(),
 			"Amount":          numberString(payment.Amount),
 			"Verified":        payment.Verified.String(),
@@ -375,7 +375,7 @@ func upsertZohoLearner(ctx context.Context, learner zohoLearner) error {
 			"ID":              id,
 			"Email":           email,
 			"Student_ID":      email,
-			"Zen_ID":          zenID,
+			"Zen_ID":          learner.ZenId,
 			"Amount":          numberString(reminder.Amount),
 			"Due_Date":        reminder.DueDate.String(),
 			"Actual_Due_Date": reminder.DueDate.String(),
@@ -415,7 +415,7 @@ func upsertZohoLearner(ctx context.Context, learner zohoLearner) error {
 		doc := bson.M{
 			"ID":                     id,
 			"Email":                  email,
-			"Zen_ID":                 zenID,
+			"Zen_ID":                 learner.ZenId,
 			"Amount":                 numberString(reminder.Amount),
 			"Due_Date":               reminder.DueDate.String(),
 			"Actual_Due_Date":        reminder.DueDate.String(),

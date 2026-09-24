@@ -72,6 +72,7 @@ type Payment struct {
 	Amount        string `json:"amount"`
 	PaymentDate   string `json:"paymentDate"`
 	Verified      string `json:"verified"`
+	VerifiedDate  string `json:"verifiedDate"`
 	Course        string `json:"course"`
 	CourseValue   string `json:"courseValue"`
 	Type          string `json:"type"`
@@ -157,10 +158,26 @@ type CcVerification struct {
 	System                 Source   `json:"system"`
 	Scraped                Source   `json:"scraped"`
 	PointsCovered          []string `json:"pointsCovered"`
+	PdfURL                 string   `json:"pdfUrl"`
 }
 
 type AuditHistory struct {
 	Rechecks []Recheck `json:"rechecks"`
 	Payments []Payment `json:"payments"`
 	Alerts   []Alert   `json:"alerts"`
+}
+
+// Roles of the signed-in user (GET /me).
+const (
+	RoleAuditor = "auditor"
+	RoleBdm     = "bdm"
+	RoleBda     = "bda"
+)
+
+// CurrentUser is who the token belongs to.
+type CurrentUser struct {
+	Hash  string `json:"hash"`
+	Name  string `json:"name"`
+	Email string `json:"email"`
+	Role  string `json:"role"`
 }

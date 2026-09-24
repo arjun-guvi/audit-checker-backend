@@ -196,6 +196,34 @@ func TestSalesAuditRequiresAuthorization(t *testing.T) {
 	}
 }
 
+func TestGetCurrentUser(t *testing.T) {
+	useTestDB(t)
+	seedFixture(t)
+	engine := newRouter()
+
+	cases := []struct{ token, wantEmail, wantName, wantRole string }{
+		{"dev-mock-token:ManagerA@example.com", "managera@example.com", "Manager A", models.RoleBdm},
+		{"dev-mock-token:owner1@example.com", "owner1@example.com", "Owner One", models.RoleBda},
+		{"dev-mock-token:auditor1@example.com", "auditor1@example.com", "auditor1@example.com", models.RoleAuditor},
+		{"opaque-zen-token", "", models.AuditTeamName, models.RoleAuditor},
+	}
+	for _, tc := range cases {
+		request := httptest.NewRequest(http.MethodGet, "/sales-audit/me", nil)
+		request.Header.Set("Authorization", tc.token)
+		recorder := httptest.NewRecorder()
+		engine.ServeHTTP(recorder, request)
+		var body envelope
+		if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+			t.Fatalf("%s: invalid JSON %q", tc.token, recorder.Body.String())
+		}
+		expect(t, recorder.Code, body, http.StatusOK)
+		user := decode[models.CurrentUser](t, body.Data)
+		if user.Hash != tc.token || user.Email != tc.wantEmail || user.Name != tc.wantName || user.Role != tc.wantRole {
+			t.Fatalf("%s: got %+v", tc.token, user)
+		}
+	}
+}
+
 func TestGetLeads(t *testing.T) {
 	useTestDB(t)
 	seedFixture(t)
@@ -333,6 +361,9 @@ func TestLeadAuditUsesCcExtract(t *testing.T) {
 
 	code, body = call(t, engine, http.MethodGet, "/sales-audit/students/L2/cc-verification", nil)
 	expect(t, code, body, http.StatusOK)
+	if cc := decode[models.CcVerification](t, body.Data); cc.PdfURL != "https://example.com/cc/2" {
+		t.Fatalf("pdfUrl %q, want the lead's CC link", cc.PdfURL)
+	}
 	code, body = call(t, engine, http.MethodGet, "/sales-audit/students/L1/cc-verification", nil)
 	expect(t, code, body, http.StatusNotFound)
 }
@@ -435,7 +466,7 @@ func TestStudentPages(t *testing.T) {
 	expect(t, code, body, http.StatusOK)
 	payments := decode[[]models.Payment](t, body.Data)
 	if len(payments) != 2 || payments[0].ID != "P1" || payments[0].PaymentDate != "20-Sep-2026" ||
-		payments[0].LeadID != "L1" || payments[1].VerifiedAt == nil {
+		payments[0].LeadID != "L1" || payments[1].VerifiedAt == nil || payments[1].VerifiedDate != "22-Sep-2026" {
 		t.Errorf("payments = %+v", payments)
 	}
 }
