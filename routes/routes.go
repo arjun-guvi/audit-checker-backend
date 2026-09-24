@@ -4,12 +4,14 @@ import (
 	"auditApp/config"
 	"auditApp/controller"
 	"auditApp/middleware"
+	salesaudit "auditApp/salesAudit"
 
 	"github.com/gin-gonic/gin"
+	"github.com/gomodule/redigo/redis"
 )
 
 // SetupRoutes initializes all routes for the application
-func SetupRoutes(router *gin.Engine) {
+func SetupRoutes(router *gin.Engine, redisPool *redis.Pool, workerNamespace string) {
 	// Initialize controllers
 	authController := controller.NewAuthController(config.MongoDB)
 	// Health check
@@ -41,4 +43,7 @@ func SetupRoutes(router *gin.Engine) {
 		sap.POST("/:id/activate", controller.SAPActivate)
 		sap.POST("/:id/deactivate", controller.SAPDeactivate)
 	}
+
+	// Sales Audit feature (/sales-audit/...)
+	salesaudit.RegisterRoutes(router, config.MongoDB, redisPool, workerNamespace)
 }

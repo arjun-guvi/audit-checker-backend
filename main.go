@@ -12,6 +12,9 @@ import (
 	"github.com/gomodule/redigo/redis"
 )
 
+// workerNamespace is the Redis namespace shared by job producers (HTTP server) and the worker.
+const workerNamespace = "audit_worker"
+
 func main() {
 	// Load environment variables
 	config.LoadEnv()
@@ -48,7 +51,7 @@ func main() {
 	// Worker mode for Redis-based background jobs
 	if *workerMode {
 		log.Println("Starting Redis worker...")
-		worker.StartWorker(redisPool, "audit_worker")
+		worker.StartWorker(redisPool, workerNamespace)
 		return
 	}
 
@@ -65,6 +68,6 @@ func main() {
 	// HTTP server mode (default)
 	log.Printf("Starting HTTP server on port %s...", config.Port)
 	router := gin.Default()
-	routes.SetupRoutes(router)
+	routes.SetupRoutes(router, redisPool, workerNamespace)
 	router.Run("127.0.0.1:" + config.Port)
 }

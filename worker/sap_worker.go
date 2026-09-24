@@ -18,7 +18,7 @@ import (
 // SAPWorker handles periodic SAP checks and email reminders
 type SAPWorker struct {
 	redisPool    interface{} // Keep for future use
-	queueName     string
+	queueName    string
 	ticker       *time.Ticker
 	stopChan     chan struct{}
 	smtpHost     string
@@ -46,7 +46,7 @@ func (w *SAPWorker) Start() error {
 
 	// Start ticker for 30 minutes
 	w.ticker = time.NewTicker(30 * time.Minute)
-	
+
 	log.Println("SAP Worker started - checking every 30 minutes")
 
 	// Run first check immediately
@@ -172,9 +172,9 @@ func (w *SAPWorker) generateEmailBody(sap models.SAP) string {
 	body.WriteString("<html>")
 	body.WriteString("<head><title>SAP Reminder</title></head>")
 	body.WriteString("<body style=\"font-family: Arial, sans-serif; padding: 20px; background-color: #f5f5f5;\">")
-	
+
 	body.WriteString("<div style=\"max-width: 700px; margin: 0 auto; background: white; padding: 30px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1);\">")
-	
+
 	// Header
 	body.WriteString("<div style=\"background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 20px; border-radius: 8px; margin-bottom: 20px;\">")
 	body.WriteString(fmt.Sprintf("<h2 style=\"margin: 0;\">SAP Reminder - %s</h2>", sap.StudentFullName))
@@ -185,7 +185,7 @@ func (w *SAPWorker) generateEmailBody(sap models.SAP) string {
 	body.WriteString("<div style=\"background: #f8f9fa; padding: 20px; border-radius: 8px; margin-bottom: 20px;\">")
 	body.WriteString("<h3 style=\"color: #333; margin-top: 0;\">Student Details</h3>")
 	body.WriteString("<table style=\"width: 100%; border-collapse: collapse;\">")
-	
+
 	details := [][]string{
 		{"Email", sap.Email},
 		{"Phone", sap.PrimaryPhone},
@@ -200,7 +200,7 @@ func (w *SAPWorker) generateEmailBody(sap models.SAP) string {
 		{"Sale Owner", sap.SaleOwner},
 		{"Last Modified", sap.ModifiedTime},
 	}
-	
+
 	for _, detail := range details {
 		if detail[1] != "" {
 			body.WriteString(fmt.Sprintf("<tr><td style=\"padding: 8px; font-weight: bold; width: 40%%; color: #666;\">%s</td>", detail[0]))
