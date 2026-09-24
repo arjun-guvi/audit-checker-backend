@@ -41,28 +41,29 @@ go run main.go -with-worker       # both in one process (the Docker default)
 
 ### Docker / Render
 
-The `Dockerfile` builds one image; the arguments choose what runs. By default (`-with-worker`) one
-container runs the HTTP server **and** the Redis worker.
+The `Dockerfile` builds one image with Redis bundled in. `docker-entrypoint.sh` starts that Redis
+(in memory, on `127.0.0.1:6379`) whenever `REDIS_HOST` is unset or points at localhost, then runs
+the app. By default (`-with-worker`) one container runs the HTTP server **and** the worker.
 
 ```bash
 docker build -t audit-app .
-docker run --env-file .env -p 8080:8080 audit-app               # HTTP server + worker (default)
-docker run --env-file .env -p 8080:8080 audit-app ""             # HTTP server only
-docker run --env-file .env audit-app -worker                     # worker only
+docker run --env-file .env -p 8080:8080 audit-app               # server + worker + bundled Redis (default)
 ```
 
-On Render, create from this repo (runtime **Docker**) and add the section 2 variables under
-*Environment* (`.env` is not copied into the image). Then pick one setup:
+On Render, create a **Web Service** from this repo (runtime **Docker**), leave the Docker Command
+empty, set the health check path to `/health`, and add the section 2 variables under
+*Environment* (`.env` is not copied into the image). Leave `REDIS_HOST` unset (or `localhost:…`)
+to use the bundled Redis. Render sets `PORT`; MongoDB Atlas must allow Render's outbound IPs.
 
-- **One service (default):** a **Web Service** with no Docker Command override. Health check path
-  `/health`; Render sets `PORT`. The worker runs inside it, so the sweeps stop while the service
-  is asleep (free instances sleep when idle).
-- **Two services:** a **Web Service** with Docker Command `/app/audit-app` (API only) plus a
-  **Background Worker** with Docker Command `/app/audit-app -worker`. The API service needs no worker
-  of its own (workers sharing one Redis split the jobs, so an extra one is harmless but unneeded).
+Notes on the bundled Redis:
 
-Either way, `REDIS_HOST` must be a Redis reachable from Render (e.g. Render Key Value, `host:port`),
-and MongoDB Atlas must allow Render's outbound IPs.
+- It lives in the container's memory: jobs waiting in the queue are lost on a restart or deploy.
+  The scheduled sweeps are re-created when the worker starts, so they carry on.
+- Free instances sleep when idle, which also pauses the worker and its sweeps.
+- It only works when the API and the worker are in the same container. To run them as separate
+  services (a Web Service with Docker Command `/app/audit-app` and a Background Worker with
+  `/app/audit-app -worker`), set `REDIS_HOST` (and `REDIS_PASSWORD`) on both to one external
+  Redis such as Render Key Value; the bundled one is then not started.
 
 Indexes (safe to run more than once):
 
