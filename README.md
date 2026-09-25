@@ -1,14 +1,19 @@
 # Audit Checker Backend
 
-Go backend for the **Zen Sales Audit** frontend (`AuditorClient`). It reads the sales data imported
-from Zoho Creator, and stores what the audit team adds on top: verify decisions, rechecks, the BDA's
-CC answers and a log of every alert mail. Scheduled jobs chase stuck leads and open rechecks by
-mail.
+Go backend for **Zen Sales Audit** (frontend: `AuditorClient`).
 
-The feature is written as plain functions in the repo's existing packages (`config`, `models`,
-`middleware`, `controller`, `routes`, `worker`), in the same style as the `/sap` code: Mongo is
-reached through `config.MongoDB`. Its files are prefixed `sales_audit`. The older JWT auth and
-`/sap` CRUD code are unrelated to it.
+The flow:
+1. Zoho sends every enrolment (a lead).
+2. The portal assigns the lead to an auditor of its region.
+3. The auditor audits it against the confirmation call (CC). They either complete the audit with a checklist, or raise a **recheck**.
+4. The BDA fixes the recheck and closes the ticket, and the auditor audits the lead again.
+5. The loop repeats until the audit is completed.
+
+Every step goes on the lead's timeline, with who did it and when.
+
+Roles: **Auditor TL**, **Auditor**, **BDM**, **BDA** (from `salesAuditMembers`).
+
+The whole feature lives in `salesAudit/` and is written in a plain functional style: package-level functions, with no handler structs and no store interfaces. The store's functions are package variables, so tests swap them for an in-memory fake (`salesAudit/store/fake`) and need no database.
 
 ---
 
@@ -16,14 +21,14 @@ reached through `config.MongoDB`. Its files are prefixed `sales_audit`. The olde
 
 1. [Getting started](#1-getting-started)
 2. [Environment variables](#2-environment-variables)
-3. [API](#3-api)
-4. [Data](#4-data)
-5. [Background jobs and mail](#5-background-jobs-and-mail)
-6. [Project structure](#6-project-structure)
-7. [Tests](#7-tests)
-8. [Changes to existing code](#8-changes-to-existing-code)
-9. [Known gaps](#9-known-gaps)
-10. [Legacy endpoints](#10-legacy-endpoints)
+3. [The flow](#3-the-flow)
+4. [API](#4-api)
+5. [Data](#5-data)
+6. [Background jobs and mail](#6-background-jobs-and-mail)
+7. [Project structure](#7-project-structure)
+8. [Tests](#8-tests)
+9. [Changes outside the feature folder](#9-changes-outside-the-feature-folder)
+10. [Known gaps](#10-known-gaps)
 
 ---
 
@@ -35,209 +40,269 @@ Requirements: **Go 1.25**, MongoDB, Redis.
 go mod download
 cp .env.example .env              # or export the variables in section 2
 go run main.go                    # HTTP server on 127.0.0.1:$PORT
-go run main.go -worker            # Redis worker: Sales Audit sweeps + mail delivery
+go run main.go -worker            # Redis worker: Zoho import + assignment, sweeps, mail delivery
 go run main.go -with-worker       # both in one process (the Docker default)
 ```
 
 ### Docker / Render
 
-The `Dockerfile` builds one image with Redis bundled in. `docker-entrypoint.sh` starts that Redis
-(in memory, on `127.0.0.1:6379`) whenever `REDIS_HOST` is unset or points at localhost, then runs
-the app. By default (`-with-worker`) one container runs the HTTP server **and** the worker.
+The `Dockerfile` builds one image with Redis bundled in:
+- `docker-entrypoint.sh` starts that Redis (in memory, on `127.0.0.1:6379`) whenever `REDIS_HOST` is unset or points at localhost, then runs the app.
+- By default (`-with-worker`), one container runs the HTTP server **and** the worker.
 
 ```bash
 docker build -t audit-app .
 docker run --env-file .env -p 8080:8080 audit-app               # server + worker + bundled Redis (default)
 ```
 
-On Render, create a **Web Service** from this repo (runtime **Docker**), leave the Docker Command
-empty, set the health check path to `/health`, and add the section 2 variables under
-*Environment* (`.env` is not copied into the image). Leave `REDIS_HOST` unset (or `localhost:…`)
-to use the bundled Redis. Render sets `PORT`; MongoDB Atlas must allow Render's outbound IPs.
+On Render:
+1. Create a **Web Service** from this repo, with runtime **Docker**. Leave the Docker Command empty.
+2. Set the health check path to `/health`.
+3. Add the section 2 variables under *Environment*. `.env` is not copied into the image.
+4. Leave `REDIS_HOST` unset (or `localhost:…`) to use the bundled Redis.
+
+Render sets `PORT` itself. MongoDB Atlas must allow Render's outbound IPs.
 
 Notes on the bundled Redis:
 
-- It lives in the container's memory: jobs waiting in the queue are lost on a restart or deploy.
-  The scheduled sweeps are re-created when the worker starts, so they carry on.
-- Free instances sleep when idle, which also pauses the worker and its sweeps.
-- It only works when the API and the worker are in the same container. To run them as separate
-  services (a Web Service with Docker Command `/app/audit-app` and a Background Worker with
-  `/app/audit-app -worker`), set `REDIS_HOST` (and `REDIS_PASSWORD`) on both to one external
-  Redis such as Render Key Value; the bundled one is then not started.
+- It lives in the container's memory, so jobs waiting in the queue are lost on a restart or deploy. The scheduled jobs are re-created when the worker starts, so they carry on.
+- Free instances sleep when idle, which also pauses the worker and its jobs.
+- It only works when the API and the worker are in the same container. To run them as separate services, use:
+  - a Web Service with Docker Command `/app/audit-app`
+  - a Background Worker with `/app/audit-app -worker`
+
+  Then set `REDIS_HOST` (and `REDIS_PASSWORD`) on both to one external Redis, such as Render Key Value. The bundled Redis is then not started.
+
+### Dev data
 
 Indexes (safe to run more than once):
 
 ```bash
-mongosh "$MONGO_URI/$MONGO_DATABASE" scripts/sales_audit_indexes.js
+mongosh "$MONGO_URI/$MONGO_DATABASE" salesAudit/scripts/indexes.js
 ```
 
-Fake data for a **dev database only** (replaces its previous seed on each run; no real PII):
+Fake members, for a **dev database only** (no real PII). Sign in as any of them from the frontend's dev shell with the token `dev-mock-token:<email>`:
 
 ```bash
-mongosh "mongodb://localhost:27017/audit_app_dev" scripts/sales_audit_seed.js
+mongosh "mongodb://localhost:27017/audit_app" salesAudit/scripts/seed.js
 ```
 
-Run the frontend against it: in `AuditorClient`, copy `.env.example` to `.env.local` and
-`npm run dev`. The Vite dev server proxies `/api/*` to this server, so no CORS changes are needed.
+Fake leads: generate a Zoho-shaped response and import it as the auditor TL. Leads are assigned by region straight after: with 100 leads, the 20 North leads go to the North auditor and the South leads split 40/40.
+
+```bash
+node salesAudit/scripts/fakeZohoResponse.js 100 > /tmp/zoho.json
+curl -X POST http://localhost:8080/sales-audit/zoho/import \
+  -H "Authorization: dev-mock-token:tl@example.com" --data-binary @/tmp/zoho.json
+```
+
+Never import real Zoho exports into a dev database, and never commit them.
 
 ## 2. Environment variables
 
-| Variable | Default | Used for |
+| Variable | Default | Purpose |
 |---|---|---|
-| `HOST` | `127.0.0.1` | Interface the HTTP server listens on; `0.0.0.0` in containers (the Dockerfile sets it) |
-| `PORT` | `8080` | HTTP port (Render sets it) |
-| `MONGO_URI` | `mongodb://localhost:27017` | MongoDB connection |
-| `MONGO_DATABASE` | `audit_app` | Database holding the Zoho and `salesAudit*` collections |
-| `REDIS_HOST` | `localhost:6379` | Job queue |
-| `REDIS_PASSWORD` | – | Job queue |
-| `SALES_AUDIT_PROGRAM` | `guvi` | `program` set by the mock auth middleware and used by the jobs |
-| `ACCOUNTS_EMAIL` | – | Accounts address copied on "payment pending over 24h" mails |
-| `SMTP_HOST`, `SMTP_PORT` (`587`), `SMTP_USERNAME`, `SMTP_PASSWORD`, `SMTP_FROM` | – | Mail delivery. When unset, mails are still logged (and shown in the UI) but marked `skipped` |
-| `ZOHO_API_URL` | `https://www.zohoapis.in/creator/custom/teamzen_guvi/Zen_Learner_Data` | Zoho learner endpoint |
-| `ZOHO_API_PUBLIC_KEY` | – | Public key sent to Zoho; required by the learner import |
-| `ZOHO_API_FROM`, `ZOHO_API_TO` | `20-Sep-2026`, `24-Sep-2026` | Date range sent to Zoho on each import |
-| `JWT_SECRET` | – | **Required**; the server refuses to start without it. Signs legacy `/login` tokens. Generate with `openssl rand -hex 32` |
+| `HOST`, `PORT` | `127.0.0.1`, `8080` | HTTP listen address |
+| `MONGO_URI`, `MONGO_DATABASE` | `mongodb://localhost:27017`, `audit_app` | MongoDB |
+| `REDIS_HOST`, `REDIS_PASSWORD` | `localhost:6379`, empty | Redis for the worker queue |
+| `SALES_AUDIT_PROGRAM` | `guvi` | The program (tenant) the mock auth puts in the context |
+| `ACCOUNTS_EMAIL` | empty | Copied on payment escalation mails |
+| `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD`, `SMTP_FROM` | `SMTP_PORT` is `587`; the others are empty | Mail delivery. With `SMTP_HOST` empty, mails are logged and marked `skipped`. |
+| `ZOHO_API_URL` | the Zoho Creator learner API | Learner import |
+| `ZOHO_API_PUBLIC_KEY` | empty | Zoho public key. The import fails without it. |
+| `ZOHO_SYNC_LOOKBACK_DAYS` | `3` | The import fetches enrolments from the last N days |
+| `ZOHO_API_FROM`, `ZOHO_API_TO` | empty | Set both (DD-Mon-YYYY) to fetch a fixed window instead |
 
-Never commit `.env`. Secrets have no defaults in code: set them in `.env` locally and as environment
-variables on the host.
+## 3. The flow
 
-## 3. API
+```
+Zoho import ──► lead (salesAuditLeads) ──► auto-assign by region (North / South, least loaded, ties random)
+     │                                           │  notification + mail to each auditor
+     │  CC link arrives (Superleap → Zoho)       ▼
+     └─► cc.status pending → updated ──► auditor alerted: "CC can be verified"
+                                                 ▼
+             Audit: database vs CC side by side (+ CC verify: PDF or call transcript)
+                 │                                          │
+      Checklist (all ticked + comments)            Recheck (category + comments)
+                 │                                          │  RC-000123 → alert + mail to BDA and BDM
+                 ▼                                          ▼
+          audit completed                 ticket open ──► BDA / BDM / auditor closes it (closer recorded)
+                                                            │  auditor alerted: "audit again"
+                                                            └──► recheckClosed ("audit pending") ──► audit again
+```
 
-All routes are under `/sales-audit`. The client sends `Authorization: <token>` (no `Bearer`).
-Responses are `{"status":"success","data":…}` or `{"status":"error","message":…}` with 400 / 401 /
-404 / 500. Full request/response shapes: `AuditorClient/API_ENDPOINTS.md`.
+A lead's audit status moves like this:
+- `unassigned → pending → completed`, or
+- `pending → recheckOpen → recheckClosed → completed`, or back to `recheckOpen` for another round.
 
-| Method | Path | Permission | Does |
+A lead can only be completed when all of these hold:
+- Every payment is verified, and the plan's minimum is met: the full fee for full payment, ₹15,000 for subscriptions, 40% of the fee for EMI.
+- No recheck is open.
+- Every checklist item is ticked.
+
+Who sees what:
+
+| Role | Leads | Rechecks | Dashboards |
 |---|---|---|---|
-| GET | `/leads` | `salesAudit.view` | Leads in the `Audit` stage with credits, escalation, CC answer and audit; `mailsSentThisSweep` = automatic escalation mails in the last hour |
-| GET | `/leads/summaries` | `salesAudit.view` | Lead picker / CC Status list |
-| POST | `/leads/:leadId/send-reminder` | `salesAudit.edit` | Mail the BDA and Accounts now; 400 if nothing to escalate |
-| POST | `/leads/:leadId/cc-response` | `salesAudit.edit` | `{response: "mailSentAwaitingAck" \| "mailNotSent"}`; `mailNotSent` alerts the BDA; 400 if the CC is already uploaded |
-| GET | `/leads/:leadId/audit` | `salesAudit.view` | Lead Audit Workspace: Zoho / CC / EMI vendor sources, rechecks, latest discount request |
-| POST | `/leads/:leadId/mark-audited` | `salesAudit.edit` | `{overrideReason}`; moves the lead to Awaiting; 400 if already verified |
-| GET | `/rechecks` | `salesAudit.view` | All rechecks, newest first |
-| POST | `/rechecks` | `salesAudit.edit` | `{leadId, category, notes}`; alerts the BDA and BDM |
-| POST | `/rechecks/:recheckId/resolve` | `salesAudit.edit` | Mark resolved; 400 if already resolved |
-| GET | `/audit-history?from=<unix s>` | `salesAudit.view` | Rechecks, payments and alert mails for trends (default: last 60 days) |
-| GET | `/students/:studentId` | `salesAudit.view` | One lead (any stage) |
-| GET | `/students/:studentId/payments` | `salesAudit.view` | The lead's financial records, oldest first |
-| GET | `/students/:studentId/cc-verification` | `salesAudit.view` | Zoho vs CC-mail comparison; 404 until the CC has been extracted |
+| Auditor TL | All | All | Team dashboard (auditors reporting to them); members |
+| Auditor | All Leads: all. My Leads: assigned. | Their own by default, all on request | None |
+| BDM | Their BDAs' leads, and leads that name them as BDM | Same | BDA dashboard, per BDA |
+| BDA | Their own | Their own | Their own |
 
-`leadId` / `studentId` is the Zoho `ID` of the `LeadData` record.
+Zoho's existing `auditCoordinator`, `auditStatus` and `recheckDetails` are imported once, as the starting state. After that the portal owns assignment, audit status and rechecks. Nothing is written back to Zoho.
 
-## 4. Data
+## 4. API
 
-### Zoho collections (read-only)
+All routes:
+- are under `/sales-audit`
+- take `Authorization: <token>` (no `Bearer`)
+- answer `{"status":"success","data":…}` or `{"status":"error","message":…}`, with 400 / 401 / 403 / 404 / 500 on errors
+- declare `salesAudit.view` or `salesAudit.edit`. Role checks happen in the actions.
 
-Imported from Zoho Creator; this service only reads them and adds indexes.
+Date filters take either:
+- a preset `…In=today|thisWeek|lastWeek|thisMonth|lastMonth` (IST; weeks start on Monday), or
+- `…From` / `…To` in Unix seconds.
 
-| Collection | Joined by | Used for |
+| Method | Path | Permission | Who | What |
+|---|---|---|---|---|
+| GET | `/me` | view | all | The member, `permissions`, `teamEmails` |
+| GET | `/members?role=` | view | all | Roster |
+| POST | `/members` | edit | TL | Add a member `{name, email, userHash, role, region, managerEmail, available}` |
+| PUT | `/members/:memberId` | edit | TL; an auditor may flip their own `available` | Edit a member |
+| GET | `/leads` | view | scoped | Paged list. Filters: `scope=mine\|all`, `auditStatus` (comma list), `region`, `auditorEmail`, `bdaEmail`, `ccStatus`, `search`, `unassigned`, `completed…`, `recheckRaised…`, `recheckClosed…`, `recheckCategory`, `recheckStatus`, `awaitingReaudit`, `page`, `pageSize` |
+| POST | `/leads/assign` | edit | TL | Assign unassigned leads now |
+| GET | `/leads/:leadId` | view | scoped | The lead (personal, course, payment + discount, admission & T&C), its rechecks, its audits and the allowed `actions` |
+| GET | `/leads/:leadId/timeline` | view | scoped | Events, oldest first, with actor and time |
+| GET | `/leads/:leadId/audit` | view | auditors | Side-by-side `comparison`, `mismatchCount`, CC points covered, checklist, rechecks, `actions` |
+| GET | `/leads/:leadId/cc-verification` | view | auditors | The lead plus the CC extract: a PDF `previewUrl` or a call `transcript` |
+| GET | `/leads/:leadId/alerts` | view | scoped | The lead's mail log |
+| POST | `/leads/:leadId/complete-audit` | edit | the lead's auditor, TL | `{checklist:[{key,checked}], comments}` |
+| POST | `/leads/:leadId/reassign` | edit | auditors | `{auditorEmail}` |
+| POST | `/leads/:leadId/take-up` | edit | auditor | Take the lead over |
+| POST | `/leads/:leadId/send-reminder` | edit | auditors | Send the payment escalation mail now |
+| GET | `/rechecks` | view | scoped | Filters: `scope`, `status=open\|closed`, `view=raisedNotClosed\|closedAuditPending\|closed`, `category`, `auditorEmail`, `bdaEmail`, `leadId`, `raised…`, `closed…` |
+| POST | `/rechecks` | edit | the lead's auditor, TL | `{leadId, category, comments}`. Categories: `ccPending`, `payment`, `emi`, `approval`, `missedPointsInCc`, `downPayment` |
+| POST | `/rechecks/:recheckId/close` | edit | the lead's BDA / BDM, auditors | `{note}` |
+| GET | `/rechecks/cc-status?status=updated\|pending` | view | auditors | Leads by CC status (paged) |
+| GET | `/dashboard/auditor-team?auditorEmail=&period…` | view | TL | Per auditor: assigned, open, audits done, completed, rechecks raised, per-day counts; recent audits |
+| GET | `/dashboard/bda?bdaEmail=&period…` | view | BDA, BDM | Leads, completed audits, rechecks (open / closed / by category), per BDA |
+| GET | `/notifications?unread=true` | view | all | `{items, unread}` |
+| POST | `/notifications/:notificationId/read` | edit | all | Mark one notification read |
+| POST | `/notifications/read-all` | edit | all | Mark all notifications read |
+| GET | `/alerts?since=` | view | auditors | Mail log |
+| POST | `/zoho/import` | edit | TL | Import a Zoho response (sent as the body), or fetch the sync window (empty body); then assign |
+| POST | `/payment-verification/run-sweep` | edit | TL | Run the BDM payment-verification sweep now |
+| POST | `/test-mail` | edit | TL | `{to}`: send one mail straight over SMTP |
+
+## 5. Data
+
+Every document has:
+- `id` (a UUID string)
+- `program`
+- `created {at, by}` (Unix seconds, user hash)
+- `deleted`
+
+Every query filters on `program` and `deleted: false`. The indexes are in `salesAudit/scripts/indexes.js`.
+
+| Collection | Holds | Key fields |
 |---|---|---|
-| `LeadData` | `ID` (lead id), `zen_id` | Leads (`Stage = "Audit"`), SAP clock (`Added_Time`), CC link and upload time (`Confirmation_Call_*`), BDA (`Sale_Owner`), BDM (`Sale_Owner_s_Manager`), course / batch / fee fields |
-| `paymentData` | `All_Enrolment` (or `Zen_ID`) = `zen_id` | Credits: latest `Credit_Booking_Amount` / `Credit_Part1` / `Credit_RemainingBalance` and their `Verified`; payment timings (`Added_Time`, `Verified_on`) |
-| `EmiData` | `Zen_ID` | EMI vendor side of the audit (loan amount, first EMI, ROI, tenure, status, vendor) |
-| `PartialReminders` | `Student_ID` = lead `ID` | Zoho installment plan for partial payments |
-| `SubscriptionReminders` | `Zen_ID` | Zoho installment plan for subscriptions |
-| `DiscountData` | `Learner_Email_ID` = lead `Email` | "Discount approved" check |
+| `salesAuditLeads` | One document per Zoho enrolment | `zenId` (unique), `region`, `personal`, `course{batch}`, `payment{records, emis, discounts, partialReminders, subscriptions, ready, shortfall}`, `admission`, `termsAccepted`, `bdaEmail`, `bdmEmail`, `cc{link, type, status, updatedAt}`, `assignment{auditorEmail, mode}`, `audit{status, attempt, completedAt, completedBy}`, `recheckSummary` |
+| `salesAuditMembers` | Who uses the feature | `userHash`, `email` (unique), `role`, `region`, `managerEmail`, `available` |
+| `salesAuditAudits` | Each audit attempt | `leadId`, `attempt`, `auditor`, `outcome` (`completed` / `recheckRaised`), `checklist`, `comments`, `mismatchCount` |
+| `salesAuditRechecks` | Recheck tickets | `recheckNo` (unique: `RC-000123`, or Zoho's SRID), `source`, `leadId`, `category`, `comments`, `raisedBy`, `raisedAt`, `bdaEmail`, `bdmEmail`, `auditorEmail`, `status`, `closed{at, by{email, name, role}, note}`, `reauditedAt` |
+| `salesAuditEvents` | The lead timeline | `leadId`, `type`, `actor`, `at`, `data` |
+| `salesAuditNotifications` | In-app alerts | `recipientEmail`, `type`, `leadId`, `recheckId`, `title`, `message`, `read` |
+| `salesAuditCounters` | Sequences | `name`, `value` (recheck numbers) |
+| `salesAuditAlerts` | Mail log | `leadId`, `kind`, `to`, `subject`, `body`, `trigger`, `sentAt`, `delivery` |
+| `salesAuditCcExtracts` | What was read from the CC | `leadId` (unique), `link`, `type`, `fields`, `transcript`, `pointsCovered`, `mocked` |
 
-Zoho dates come in several layouts (`15-Sep-2026 15:22:19`, `19-Sep-2026`, `2026-09-24`, ISO); they
-are read as IST unless they carry a zone (`worker/sales_audit_format.go`).
+Each import refreshes a lead's Zoho-owned fields. It never overwrites `assignment`, `audit` or `recheckSummary`.
 
-### Feature collections
+## 6. Background jobs and mail
 
-Every document has `id` (UUID), `program`, `created: {at, by}` and `deleted`; timestamps are Unix
-seconds; every query filters on `program` and `deleted: false`.
+The jobs are registered by `salesAudit/worker.Register(pool)` (gocraft/work on Redis):
 
-| Collection | Fields | Indexes |
+| Job | Schedule | Does |
 |---|---|---|
-| `salesAuditRechecks` | `leadId, category, notes, status (open\|resolved), raisedBy, raisedAt, resolvedAt, alert, lastReminder` | `{program, id}` unique; `{program, deleted, leadId, raisedAt}`; `{program, deleted, status}` |
-| `salesAuditAlerts` | `leadId, kind (escalation\|recheck\|recheckReminder\|ccNotSent), to, subject, trigger (auto\|manual), sentAt, delivery (queued\|sent\|skipped\|failed)` | `{program, id}` unique; `{program, deleted, leadId, kind, sentAt}`; `{program, deleted, sentAt}` |
-| `salesAuditCcResponses` | `leadId, response, updatedAt, alert` | `{program, leadId}` unique |
-| `salesAuditAudits` | `leadId, auditedAt, auditedBy, overrideReason` | `{program, leadId}` unique |
-| `salesAuditCcExtracts` | `leadId, scraped, pointsCovered` (written by the future CC parser) | `{program, leadId}` unique |
+| `salesAudit_zoho_import` | every 15 min | Fetches the sync window, imports it, then assigns unassigned leads |
+| `salesAudit_assign_leads` | on demand | Assignment only |
+| `salesAudit_escalation_sweep` | hourly | Mails the BDA, BDM and Accounts about leads with an unverified payment for over 24h; repeats daily |
+| `salesAudit_recheck_reminder_sweep` | hourly | Mails the BDA and BDM again about rechecks open for over 24h; repeats daily |
+| `salesAudit_payment_verification_sweep` | every 10 min | Mails the BDM once per lead about a payment unverified for over 24h |
+| `salesAudit_send_mail` | queued | Delivers one logged mail over SMTP |
 
-## 5. Background jobs and mail
+Mails the feature sends, besides the sweeps above:
 
-Jobs use the existing gocraft/work Redis pool (`worker/start.go`, namespace `audit_worker`).
-
-| Job | When | Does |
+| Mail | Goes to | Contents |
 |---|---|---|
-| `salesAudit_sap_escalation_sweep` | Hourly | Leads over 24h in SAP with an unverified or mismatched payment, not mailed in the last 24h → mail BDA + Accounts |
-| `salesAudit_recheck_reminder_sweep` | Hourly | Rechecks open 24h since raised or last reminded → mail BDA + BDM, set `lastReminder` |
-| `salesAudit_send_mail` | Enqueued by the API and sweeps | Sends one logged alert over SMTP and records its `delivery` |
-| `zoho_learner_import_job` | Every 15 minutes | Fetches the configured Zoho learner date range and upserts `LeadData`, `paymentData`, and `PartialReminders` |
-| `payment_verification_sweep` | Every 10 minutes | Learners with a payment unverified for over 24h and not mailed yet → mail the learner, set `LeadData.Payment_Verification_Mailed_At`. Run it on demand with `POST /sales-audit/payment-verification/run-sweep` |
+| Recheck raised | BDA + BDM | The recheck ID and the lead |
+| Recheck closed | Auditor | |
+| Leads assigned | Each auditor | One digest per auditor |
+| CC updated | Auditor | |
 
-A mail is logged in `salesAuditAlerts` first and then queued, so the UI shows it even if Redis or
-SMTP is down (its `delivery` then reads `failed` or `skipped`).
+Each mail is logged in `salesAuditAlerts`, with its body, before it is queued.
 
-## 6. Project structure
+## 7. Project structure
 
 ```
-config/config.go                  SALES_AUDIT_PROGRAM, ACCOUNTS_EMAIL, SMTP_* settings
-models/sales_audit.go             collection names, permissions, enums, feature documents
-models/sales_audit_zoho.go        read structs for the Zoho collections (Zoho field names)
-models/sales_audit_api.go         response shapes the frontend reads
-models/worker.go                  job names (SALES_AUDIT_*_JOB)
-middleware/sales_audit.go         SalesAuditAuth (mock auth), RequirePermission
-controller/sales_audit.go         one handler function per endpoint
-routes/routes.go                  /sales-audit group, permission per route
-worker/sales_audit_db.go          every Mongo read/write (the Zoho collections are only read)
-worker/sales_audit_leads.go       shared operations: build leads, schedule, discount, log + queue mail
-worker/sales_audit_jobs.go        hourly sweeps, mail job, SMTP delivery, job registration
-worker/sales_audit_format.go      pure: Zoho date parsing, formatting, UUIDs
-worker/sales_audit_rules.go       pure: escalation / reminder rules, recipients, subjects
-worker/sales_audit_mapping.go     pure: Zoho -> API mapping, audit sources
-scripts/sales_audit_indexes.js    indexes (idempotent)
-scripts/sales_audit_seed.js       fake data for a dev database
+salesAudit/
+  models/        documents, enums, collection names, Zoho payload, API shapes
+  core/          pure functions: Zoho mapping, payment rules, status machine, roles and scope,
+                 assignment, date presets, CC comparison, checklist, dashboards, mail texts
+  store/         the only package that talks to Mongo: exported function variables
+  store/fake/    in-memory versions for tests (fake.Install(t))
+  actions/       use cases: import, assign, audit, rechecks, dashboards, notifications, sweeps
+  controllers/   Gin handlers, mock auth + member middleware
+  routes/        Register(engine)
+  worker/        SetupQueue + Register(pool) and the job functions
+  zoho/          Zoho learner API client (resty)
+  cc/            CC reader; Extract is a mock until the FastAPI service is connected
+  scripts/       indexes.js, seed.js, fakeZohoResponse.js
 ```
 
-The shared operations live in `worker` because both the handlers and the jobs use them, and
-`controller` already imports `worker` (as the `/sap` code does).
-
-## 7. Tests
+## 8. Tests
 
 ```bash
-go test ./...                                              # pure rules and mapping
-TEST_MONGO_URI=mongodb://localhost:27017 go test ./...     # + every endpoint and job
-go vet ./...
+go vet ./... && go test ./salesAudit/...
 ```
 
-The endpoint tests (`controller/sales_audit_test.go`) and job tests
-(`worker/sales_audit_jobs_test.go`) run the real routes and queries against a throwaway database
-that each test creates and drops; they skip when `TEST_MONGO_URI` is not set. Mail queueing, SMTP
-and the clock are replaced in tests.
+- `core/`:
+  - assignment (20 North + 80 South leads split 20 / 40 / 40)
+  - payment rules, status machine, date presets
+  - scopes, Zoho mapping, CC comparison
+- `controllers/`: every flow over the real routes, with the fake store:
+  - auth; import and assignment
+  - audit → recheck → close → re-audit → complete
+  - timeline, filters, dashboards
+  - reassign and take up, CC status
+  - role denials
 
-## 8. Changes to existing code
+## 9. Changes outside the feature folder
 
-- `main.go`: `workerNamespace` constant; passes the Redis pool and namespace to `SetupRoutes`.
-- `config/config.go`: Sales Audit and SMTP settings.
-- `models/worker.go`: Sales Audit job names.
-- `routes/routes.go`: `SetupRoutes(router, redisPool, workerNamespace)` mounts `/sales-audit`.
-- `worker/start.go`: registers the Sales Audit jobs on the worker pool.
-- `go.mod`: `go 1.25` (was 1.26.4, which RULES.MD does not allow); `golang.org/x/*` pinned to
-  versions that build on Go 1.25.
-- Removed: the committed macOS binaries `audit-app` and `tmp/main`, and the empty
-  `models/models.go` and `worker/worker.go`.
+Outside `salesAudit/` only the app shell is left:
+- `main.go`: starts the HTTP server (`-with-worker` adds the worker; `-worker` runs only the worker).
+- `config/config.go`: env vars and the Mongo connection.
+- `controller/controller.go`: `GET /health`.
+- `routes/routes.go`: `/health`, then `salesAuditWorker.SetupQueue` and `salesAuditRoutes.Register(router)`.
+- `worker/start.go`: the worker pool running `salesAuditWorker.Register(pool)`.
+- `go.mod`: adds `github.com/go-resty/resty/v2` (RULES §6). The JWT and bcrypt dependencies are gone.
 
-## 9. Known gaps
+**Removed** (replaced by `salesAudit/`, or unused by it):
+- The legacy JWT auth (`POST /register`, `POST /login`, `GET /me`, `JWT_SECRET`) and the `/sap/*` CRUD with its `-sap-worker` mode: `controller/auth.go`, `controller/sap_controller.go`, `middleware/auth.go`, `models/`, `worker/sap_worker.go`, `worker/helloworld.go`
+- `controller/sales_audit*.go`
+- `middleware/sales_audit.go`
+- `models/sales_audit*.go`
+- `worker/sales_audit_*.go`, `worker/payment_verification*.go`, `worker/zoho_learner_import*.go`
+- `scripts/sales_audit_*.js`
 
-1. **No `program` on the Zoho collections**, so reads from them cannot be filtered by tenant. The
-   feature collections are. Needs a `program` field on the import, or a separate database per
-   program.
-2. **CC mail is not parsed.** `sources.cc` stays `null` and `cc-verification` returns 404 until
-   something (the AI service via this backend) writes `salesAuditCcExtracts`.
-3. **No real EMI vendor feed.** The vendor side is the `EmiData` loan application. Zoho's own
-   EMI side has only the tenure (from `Payment_Type`) and status to compare against it.
-4. **Mock auth.** `auth` is the raw token and permissions are declared but not enforced; Zen's
-   middleware replaces both. `raisedBy` / `auditedBy` read "Audit Team" until Zen gives user names.
-5. **Installment alignment is inferred.** For split plans the reminders are assumed to cover the
-   parts still due, with the initial payment (`Credit_Part1`) as the first part.
-6. `mailsSentThisSweep` counts automatic escalation mails from the last hour, so the frontend's
-   toast repeats on every load during that hour.
-7. No undo for "mark audited", no server-side re-check of the audit checklist.
+**Other notes:**
+- The feature no longer reads or writes the `LeadData`, `paymentData`, `EmiData`, `DiscountData`, `PartialReminders` and `SubscriptionReminders` collections. Zoho data now lives in `salesAuditLeads`.
+- On merge, Zen's auth middleware replaces `controllers.Auth()`. `controllers.Member()` then maps the user hash to a `salesAuditMembers` row, so members need their Zen `userHash`.
 
-## 10. Legacy endpoints
+## 10. Known gaps
 
-Pre-existing and unrelated to the Sales Audit feature: `POST /register`, `POST /login`,
-`GET /me` (JWT, `Authorization: Bearer <token>`), `/sap/*` CRUD and the `-sap-worker` mode.
+1. **CC reading is mocked.** `cc.Extract` replays the lead's own data, with a deterministic mismatch on about one lead in four, plus a sample transcript. Replace it with the FastAPI service client.
+2. **Nothing is written back to Zoho**: not the assignment, the audit status or the rechecks.
+3. **Mock auth.** Permissions are declared, not enforced. Roles come from `salesAuditMembers`.
+4. **Dashboards aggregate in memory.** That is fine for thousands of leads; beyond that they need Mongo aggregation.
+5. **Rechecks imported from Zoho as closed count as already re-audited.** There is no portal audit for them.
+6. **Old dev data does not fit the new shape.** `salesAuditRechecks` and `salesAuditAudits` data from the previous version needs clearing once. `indexes.js` drops the old unique `{program, leadId}` index on `salesAuditAudits`.

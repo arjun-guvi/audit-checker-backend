@@ -17,7 +17,6 @@ var (
 	MongoDatabase string
 	Host          string
 	Port          string
-	JWTSecret     string
 
 	// Sales Audit
 	SalesAuditProgram string
@@ -31,8 +30,6 @@ var (
 	// Zoho Creator learner import
 	ZohoAPIURL       string
 	ZohoAPIPublicKey string
-	ZohoAPIFrom      string
-	ZohoAPITo        string
 
 	MongoClient *mongo.Client
 	MongoDB     *mongo.Database
@@ -51,7 +48,6 @@ func LoadEnv() {
 	// Containers must listen on 0.0.0.0; the default keeps local runs off the network
 	Host = getEnv("HOST", "127.0.0.1")
 	Port = getEnv("PORT", "8080")
-	JWTSecret = getEnv("JWT_SECRET", "")
 
 	SalesAuditProgram = getEnv("SALES_AUDIT_PROGRAM", "guvi")
 	AccountsEmail = getEnv("ACCOUNTS_EMAIL", "")
@@ -63,13 +59,7 @@ func LoadEnv() {
 	SMTPFrom = getEnv("SMTP_FROM", "")
 	ZohoAPIURL = getEnv("ZOHO_API_URL", "https://www.zohoapis.in/creator/custom/teamzen_guvi/Zen_Learner_Data")
 	ZohoAPIPublicKey = getEnv("ZOHO_API_PUBLIC_KEY", "")
-	ZohoAPIFrom = getEnv("ZOHO_API_FROM", "20-Sep-2026")
-	ZohoAPITo = getEnv("ZOHO_API_TO", "24-Sep-2026")
 
-	// Secrets have no fallback: a missing one must fail loudly, not run with a known value
-	if JWTSecret == "" {
-		log.Fatal("JWT_SECRET is not set")
-	}
 }
 
 func ConnectMongo() error {
