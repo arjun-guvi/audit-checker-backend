@@ -168,7 +168,7 @@ Date filters take either:
 | GET | `/members?role=` | view | all | Roster |
 | POST | `/members` | edit | TL | Add a member `{name, email, userHash, role, region, managerEmail, available}` |
 | PUT | `/members/:memberId` | edit | TL; an auditor may flip their own `available` | Edit a member |
-| GET | `/leads` | view | scoped | Paged list. Filters: `scope=mine\|all`, `auditStatus` (comma list), `region`, `auditorEmail`, `bdaEmail`, `ccStatus`, `search`, `unassigned`, `completed…`, `recheckRaised…`, `recheckClosed…`, `recheckCategory`, `recheckStatus`, `awaitingReaudit`, `page`, `pageSize` |
+| GET | `/leads` | view | scoped | Paged list. Filters: `scope=mine\|all`; comma lists (any of) `auditStatus`, `region`, `auditorEmail`, `bdaEmail`, `ccStatus`, `recheckCategory`; `search`, `unassigned`, `completed…`, `recheckRaised…`, `recheckClosed…`, `recheckStatus`, `awaitingReaudit`, `page`, `pageSize` |
 | POST | `/leads/assign` | edit | TL | Assign unassigned leads now |
 | GET | `/leads/:leadId` | view | scoped | The lead (personal, course, payment + discount, admission & T&C), its rechecks, its audits and the allowed `actions` |
 | GET | `/leads/:leadId/timeline` | view | scoped | Events, oldest first, with actor and time |
@@ -179,8 +179,8 @@ Date filters take either:
 | POST | `/leads/:leadId/reassign` | edit | auditors | `{auditorEmail}` |
 | POST | `/leads/:leadId/take-up` | edit | auditor | Take the lead over |
 | POST | `/leads/:leadId/send-reminder` | edit | auditors | Send the payment escalation mail now |
-| GET | `/rechecks` | view | scoped | Filters: `scope`, `status=open\|closed`, `view=raisedNotClosed\|closedAuditPending\|closed`, `category`, `auditorEmail`, `bdaEmail`, `leadId`, `raised…`, `closed…` |
-| POST | `/rechecks` | edit | the lead's auditor, TL | `{leadId, category, comments}`. Categories: `ccPending`, `payment`, `emi`, `approval`, `missedPointsInCc`, `downPayment` |
+| GET | `/rechecks` | view | scoped | Filters: `scope`, `status=open\|closed`, `view=raisedNotClosed\|closedAuditPending\|closed`; comma lists (any of) `category`, `auditorEmail`, `bdaEmail`; `search` (recheck number, lead name, Zen ID, comments); `leadId`, `raised…`, `closed…` |
+| POST | `/rechecks` | edit | the lead's auditor, TL | `{leadId, reasons: [{category, comments}]}`, one reason per category (`{leadId, category, comments}` still works as one reason). Categories: `ccPending`, `payment`, `emi`, `approval`, `missedPointsInCc`, `downPayment` |
 | POST | `/rechecks/:recheckId/close` | edit | the lead's BDA / BDM, auditors | `{note}` |
 | GET | `/rechecks/cc-status?status=updated\|pending` | view | auditors | Leads by CC status (paged) |
 | GET | `/dashboard/auditor-team?auditorEmail=&period…` | view | TL | Per auditor: assigned, open, audits done, completed, rechecks raised, per-day counts; recent audits |
@@ -194,6 +194,8 @@ Date filters take either:
 | POST | `/test-mail` | edit | TL | `{to}`: send one mail straight over SMTP |
 
 ## 5. Data
+
+For every collection's fields, how they relate, and which documents each step of the flow writes, see [DATABASE.md](DATABASE.md).
 
 Every document has:
 - `id` (a UUID string)

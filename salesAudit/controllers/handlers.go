@@ -103,22 +103,22 @@ func GetLeads(c *gin.Context) {
 	params := actions.LeadListParams{
 		Query: models.LeadQuery{
 			AuditStatuses: queryList(c, "auditStatus"),
-			Region:        c.Query("region"),
-			AuditorEmail:  c.Query("auditorEmail"),
-			BdaEmail:      c.Query("bdaEmail"),
-			CcStatus:      c.Query("ccStatus"),
+			Regions:       queryList(c, "region"),
+			AuditorEmails: queryList(c, "auditorEmail"),
+			BdaEmails:     queryList(c, "bdaEmail"),
+			CcStatuses:    queryList(c, "ccStatus"),
 			Search:        c.Query("search"),
 			Unassigned:    c.Query("unassigned") == "true",
 			Completed:     ranges["completed"],
 			Page:          queryInt(c, "page"),
 			PageSize:      queryInt(c, "pageSize"),
 		},
-		Mine:            c.Query("scope") == "mine",
-		RecheckRaised:   ranges["recheckRaised"],
-		RecheckClosed:   ranges["recheckClosed"],
-		RecheckCategory: c.Query("recheckCategory"),
-		RecheckStatus:   c.Query("recheckStatus"),
-		AwaitingReaudit: c.Query("awaitingReaudit") == "true",
+		Mine:              c.Query("scope") == "mine",
+		RecheckRaised:     ranges["recheckRaised"],
+		RecheckClosed:     ranges["recheckClosed"],
+		RecheckCategories: queryList(c, "recheckCategory"),
+		RecheckStatus:     c.Query("recheckStatus"),
+		AwaitingReaudit:   c.Query("awaitingReaudit") == "true",
 	}
 	page, err := actions.ListLeads(c, member(c), params)
 	reply(c, page, err)
@@ -205,16 +205,17 @@ func SendReminder(c *gin.Context) {
 // Rechecks
 
 // GetRechecks: GET /rechecks. Filters: scope=mine|all, status=open|closed,
-// view=raisedNotClosed|closedAuditPending|closed, category, auditorEmail, bdaEmail, leadId,
-// raised*, closed* date filters (…In presets or …From/…To).
+// view=raisedNotClosed|closedAuditPending|closed; comma lists (any of) category, auditorEmail,
+// bdaEmail; search (recheck number, lead name, Zen ID, comments); leadId; raised*, closed* date
+// filters (…In presets or …From/…To).
 func GetRechecks(c *gin.Context) {
 	ranges, ok := queryRanges(c, "raised", "closed")
 	if !ok {
 		return
 	}
 	query := models.RecheckQuery{
-		Status: c.Query("status"), Category: c.Query("category"),
-		AuditorEmail: c.Query("auditorEmail"), BdaEmail: c.Query("bdaEmail"),
+		Status: c.Query("status"), Categories: queryList(c, "category"),
+		AuditorEmails: queryList(c, "auditorEmail"), BdaEmails: queryList(c, "bdaEmail"), Search: c.Query("search"),
 		Raised: ranges["raised"], ClosedIn: ranges["closed"],
 	}
 	if leadID := c.Query("leadId"); leadID != "" {
@@ -238,17 +239,22 @@ func GetRechecks(c *gin.Context) {
 	reply(c, rechecks, err)
 }
 
-// RaiseRecheck: POST /rechecks {leadId, category, comments}
+// RaiseRecheck: POST /rechecks {leadId, reasons: [{category, comments}]}. The older
+// {leadId, category, comments} is still taken, as one reason.
 func RaiseRecheck(c *gin.Context) {
 	var body struct {
-		LeadID   string `json:"leadId"`
-		Category string `json:"category"`
-		Comments string `json:"comments"`
+		LeadID   string                 `json:"leadId"`
+		Reasons  []models.RecheckReason `json:"reasons"`
+		Category string                 `json:"category"`
+		Comments string                 `json:"comments"`
 	}
 	if !bind(c, &body) {
 		return
 	}
-	recheck, err := actions.RaiseRecheck(c, member(c), body.LeadID, body.Category, body.Comments)
+	if len(body.Reasons) == 0 && body.Category != "" {
+		body.Reasons = []models.RecheckReason{{Category: body.Category, Comments: body.Comments}}
+	}
+	recheck, err := actions.RaiseRecheck(c, member(c), body.LeadID, body.Reasons)
 	reply(c, recheck, err)
 }
 
@@ -277,7 +283,7 @@ func GetCcStatus(c *gin.Context) {
 		return
 	}
 	page, err := actions.ListLeads(c, who, actions.LeadListParams{
-		Query: models.LeadQuery{CcStatus: status, Search: c.Query("search"), Page: queryInt(c, "page"), PageSize: queryInt(c, "pageSize"),
+		Query: models.LeadQuery{CcStatuses: core.NonEmpty(status), Search: c.Query("search"), Page: queryInt(c, "page"), PageSize: queryInt(c, "pageSize"),
 			AuditStatuses: []string{models.AuditPending, models.AuditRecheckOpen, models.AuditRecheckClosed, models.AuditUnassigned}},
 		Mine: c.Query("scope") == "mine",
 	})

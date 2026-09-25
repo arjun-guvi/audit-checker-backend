@@ -76,12 +76,12 @@ func BdaDashboard(ctx context.Context, member models.Member, bdaEmail string, sp
 			bdas = append(bdas, bda)
 		}
 	}
-	leadQuery := models.LeadQuery{Scope: scope, BdaEmail: bdaEmail}
+	leadQuery := models.LeadQuery{Scope: scope, BdaEmails: core.NonEmpty(bdaEmail)}
 	leads, _, err := store.FindLeads(ctx, member.Program, leadQuery)
 	if err != nil {
 		return models.BdaDashboard{}, err
 	}
-	rechecks, err := store.FindRechecks(ctx, member.Program, models.RecheckQuery{Scope: scope, BdaEmail: bdaEmail})
+	rechecks, err := store.FindRechecks(ctx, member.Program, models.RecheckQuery{Scope: scope, BdaEmails: core.NonEmpty(bdaEmail)})
 	if err != nil {
 		return models.BdaDashboard{}, err
 	}

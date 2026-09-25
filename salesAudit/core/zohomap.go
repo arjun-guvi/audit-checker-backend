@@ -319,6 +319,7 @@ func RecheckFromZoho(program string, lead models.Lead, zoho models.ZohoRecheck, 
 		BdmEmail:  lead.BdmEmail,
 		Created:   models.Created{At: now, By: models.SystemUser},
 	}
+	recheck.Reasons = []models.RecheckReason{{Category: recheck.Category, Comments: recheck.Comments}}
 	if lead.Assignment != nil {
 		recheck.AuditorEmail = lead.Assignment.AuditorEmail
 	}

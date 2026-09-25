@@ -20,16 +20,16 @@ func MatchLead(query models.LeadQuery, lead models.Lead) bool {
 	if len(query.AuditStatuses) > 0 && !containsFold(query.AuditStatuses, lead.Audit.Status) {
 		return false
 	}
-	if query.Region != "" && !strings.EqualFold(query.Region, lead.Region) {
+	if len(query.Regions) > 0 && !containsFold(query.Regions, lead.Region) {
 		return false
 	}
-	if query.AuditorEmail != "" && !strings.EqualFold(query.AuditorEmail, AuditorOf(lead)) {
+	if len(query.AuditorEmails) > 0 && !containsFold(query.AuditorEmails, AuditorOf(lead)) {
 		return false
 	}
-	if query.BdaEmail != "" && !strings.EqualFold(query.BdaEmail, lead.BdaEmail) {
+	if len(query.BdaEmails) > 0 && !containsFold(query.BdaEmails, lead.BdaEmail) {
 		return false
 	}
-	if query.CcStatus != "" && query.CcStatus != lead.Cc.Status {
+	if len(query.CcStatuses) > 0 && !containsFold(query.CcStatuses, lead.Cc.Status) {
 		return false
 	}
 	if query.Unassigned && lead.Assignment != nil {
@@ -58,14 +58,20 @@ func MatchRecheck(query models.RecheckQuery, recheck models.Recheck) bool {
 	if query.Status != "" && query.Status != recheck.Status {
 		return false
 	}
-	if query.Category != "" && query.Category != recheck.Category {
+	if len(query.Categories) > 0 && !anyContained(query.Categories, ReasonCategories(ReasonsOf(recheck))) {
 		return false
 	}
-	if query.AuditorEmail != "" && !strings.EqualFold(query.AuditorEmail, recheck.AuditorEmail) {
+	if len(query.AuditorEmails) > 0 && !containsFold(query.AuditorEmails, recheck.AuditorEmail) {
 		return false
 	}
-	if query.BdaEmail != "" && !strings.EqualFold(query.BdaEmail, recheck.BdaEmail) {
+	if len(query.BdaEmails) > 0 && !containsFold(query.BdaEmails, recheck.BdaEmail) {
 		return false
+	}
+	if search := strings.ToLower(strings.TrimSpace(query.Search)); search != "" {
+		haystack := strings.ToLower(strings.Join([]string{recheck.RecheckNo, recheck.LeadName, recheck.ZenID, recheck.Comments}, " "))
+		if !strings.Contains(haystack, search) {
+			return false
+		}
 	}
 	if IsSet(query.Raised) && !InRange(query.Raised, recheck.RaisedAt) {
 		return false
@@ -88,4 +94,14 @@ func MatchAudit(query models.AuditQuery, audit models.Audit) bool {
 		return false
 	}
 	return !IsSet(query.Submitted) || InRange(query.Submitted, audit.SubmittedAt)
+}
+
+// anyContained reports whether any of values is in list.
+func anyContained(list, values []string) bool {
+	for _, value := range values {
+		if containsFold(list, value) {
+			return true
+		}
+	}
+	return false
 }

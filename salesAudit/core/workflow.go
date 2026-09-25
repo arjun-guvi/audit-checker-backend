@@ -144,6 +144,8 @@ var (
 	ErrRecheckNotOpen      = errors.New("This recheck is already closed")
 	ErrUnknownCategory     = errors.New("Unknown recheck category")
 	ErrCommentsRequired    = errors.New("Comments are required")
+	ErrNoReasons           = errors.New("Add at least one reason")
+	ErrDuplicateReason     = errors.New("Each category can only be one reason")
 	ErrChecklistIncomplete = errors.New("Tick every checklist item before completing the audit")
 	ErrNotAnAuditor        = errors.New("That member is not an available auditor")
 )
@@ -203,7 +205,7 @@ func CheckComplete(member models.Member, lead models.Lead) error {
 }
 
 // CheckRaiseRecheck validates raising a recheck.
-func CheckRaiseRecheck(member models.Member, lead models.Lead, category, comments string) error {
+func CheckRaiseRecheck(member models.Member, lead models.Lead, reasons []models.RecheckReason) error {
 	switch {
 	case !CanWorkOn(member, lead):
 		return ErrNotAssigned
@@ -212,13 +214,63 @@ func CheckRaiseRecheck(member models.Member, lead models.Lead, category, comment
 	case lead.Audit.Status == models.AuditUnassigned:
 		return ErrNotAssigned
 	}
-	if _, known := models.RecheckCategories[category]; !known {
-		return ErrUnknownCategory
+	if len(reasons) == 0 {
+		return ErrNoReasons
 	}
-	if strings.TrimSpace(comments) == "" {
-		return ErrCommentsRequired
+	seen := map[string]bool{}
+	for _, reason := range reasons {
+		if _, known := models.RecheckCategories[reason.Category]; !known {
+			return ErrUnknownCategory
+		}
+		if seen[reason.Category] {
+			return ErrDuplicateReason
+		}
+		seen[reason.Category] = true
+		if strings.TrimSpace(reason.Comments) == "" {
+			return ErrCommentsRequired
+		}
 	}
 	return nil
+}
+
+// ReasonsOf is a recheck's reasons. Rechecks from Zoho, or stored before there could be several
+// reasons, only have a category and comments: that is their one reason.
+func ReasonsOf(recheck models.Recheck) []models.RecheckReason {
+	if len(recheck.Reasons) > 0 {
+		return recheck.Reasons
+	}
+	return []models.RecheckReason{{Category: recheck.Category, Comments: recheck.Comments}}
+}
+
+// ReasonCategories is the reasons' categories, in order.
+func ReasonCategories(reasons []models.RecheckReason) []string {
+	categories := make([]string, len(reasons))
+	for i, reason := range reasons {
+		categories[i] = reason.Category
+	}
+	return categories
+}
+
+// ReasonLabels is the reasons' category labels in one line: "Payment, EMI".
+func ReasonLabels(reasons []models.RecheckReason) string {
+	labels := make([]string, len(reasons))
+	for i, reason := range reasons {
+		labels[i] = models.RecheckCategories[reason.Category]
+	}
+	return strings.Join(labels, ", ")
+}
+
+// SummarizeReasons is every reason in one line, for Comments: a single reason is just its
+// comments; several read "Payment: UTR missing; EMI: tenor differs".
+func SummarizeReasons(reasons []models.RecheckReason) string {
+	if len(reasons) == 1 {
+		return reasons[0].Comments
+	}
+	parts := make([]string, len(reasons))
+	for i, reason := range reasons {
+		parts[i] = models.RecheckCategories[reason.Category] + ": " + reason.Comments
+	}
+	return strings.Join(parts, "; ")
 }
 
 // CanCloseRecheck: the lead's BDA or BDM, a BDM whose BDA it is, any auditor or auditor TL.

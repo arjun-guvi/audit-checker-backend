@@ -23,10 +23,11 @@ type LeadQuery struct {
 	Scope         Scope
 	LeadIDs       []string // nil means any; empty means none
 	AuditStatuses []string
-	Region        string
-	AuditorEmail  string
-	BdaEmail      string
-	CcStatus      string
+	// Each list matches any of its values; an empty list means any.
+	Regions       []string
+	AuditorEmails []string
+	BdaEmails     []string
+	CcStatuses    []string
 	Search        string
 	Completed     Range
 	Unassigned    bool
@@ -36,14 +37,17 @@ type LeadQuery struct {
 
 // RecheckQuery filters rechecks.
 type RecheckQuery struct {
-	Scope        Scope
-	LeadIDs      []string // nil means any
-	Status       string
-	Category     string
-	AuditorEmail string
-	BdaEmail     string
-	Raised       Range
-	ClosedIn     Range
+	Scope      Scope
+	LeadIDs    []string // nil means any
+	Status     string
+	Categories []string // any of; empty means any
+	// Each list matches any of its values; an empty list means any.
+	AuditorEmails []string
+	BdaEmails     []string
+	// Search matches the recheck number, lead name, Zen ID or comments.
+	Search   string
+	Raised   Range
+	ClosedIn Range
 	// AwaitingReaudit: closed and the lead not audited since.
 	AwaitingReaudit bool
 }

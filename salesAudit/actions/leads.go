@@ -12,16 +12,16 @@ import (
 type LeadListParams struct {
 	Query models.LeadQuery
 	// Mine narrows an auditor or TL to their own leads (My Leads).
-	Mine            bool
-	RecheckRaised   models.Range
-	RecheckClosed   models.Range
-	RecheckCategory string
-	RecheckStatus   string
-	AwaitingReaudit bool
+	Mine              bool
+	RecheckRaised     models.Range
+	RecheckClosed     models.Range
+	RecheckCategories []string
+	RecheckStatus     string
+	AwaitingReaudit   bool
 }
 
 func filtersRechecks(p LeadListParams) bool {
-	return core.IsSet(p.RecheckRaised) || core.IsSet(p.RecheckClosed) || p.RecheckCategory != "" ||
+	return core.IsSet(p.RecheckRaised) || core.IsSet(p.RecheckClosed) || len(p.RecheckCategories) > 0 ||
 		p.RecheckStatus != "" || p.AwaitingReaudit
 }
 
@@ -44,7 +44,7 @@ func ListLeads(ctx context.Context, member models.Member, params LeadListParams)
 	query.Scope = scope
 	if filtersRechecks(params) {
 		rechecks, err := store.FindRechecks(ctx, member.Program, models.RecheckQuery{
-			Scope: scope, Status: params.RecheckStatus, Category: params.RecheckCategory,
+			Scope: scope, Status: params.RecheckStatus, Categories: params.RecheckCategories,
 			Raised: params.RecheckRaised, ClosedIn: params.RecheckClosed, AwaitingReaudit: params.AwaitingReaudit,
 		})
 		if err != nil {

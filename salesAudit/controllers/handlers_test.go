@@ -341,3 +341,106 @@ func TestCcStatusAndLeadVisibility(t *testing.T) {
 		t.Fatalf("bad preset: %d", code)
 	}
 }
+
+func TestLeadFiltersTakeLists(t *testing.T) {
+	e := setup(t)
+	call(e, "tl@example.com", http.MethodPost, "/zoho/import", zohoLearners(2, 4), nil)
+	count := func(query string) int {
+		var page models.Page[models.Lead]
+		if code := call(e, "tl@example.com", http.MethodGet, "/leads?"+query, nil, &page); code != http.StatusOK {
+			t.Fatalf("%s: %d", query, code)
+		}
+		return page.Total
+	}
+	if got := count("region=North"); got != 2 {
+		t.Fatalf("one region: %d", got)
+	}
+	if got := count("region=North,South"); got != 6 {
+		t.Fatalf("both regions: %d", got)
+	}
+	if got := count("auditorEmail=north@example.com,SOUTH1@example.com"); got != 4 {
+		t.Fatalf("two auditors: %d", got)
+	}
+	if got := count("region=North&auditorEmail=south1@example.com,south2@example.com"); got != 0 {
+		t.Fatalf("filters still combine with AND: %d", got)
+	}
+}
+
+func TestRecheckWithSeveralReasons(t *testing.T) {
+	e := setup(t)
+	call(e, "tl@example.com", http.MethodPost, "/zoho/import", zohoLearners(1, 0), nil)
+	lead := e.data.Leads[0]
+	raise := func(reasons ...models.RecheckReason) (int, models.Recheck) {
+		var recheck models.Recheck
+		code := call(e, "north@example.com", http.MethodPost, "/rechecks", map[string]any{"leadId": lead.ID, "reasons": reasons}, &recheck)
+		return code, recheck
+	}
+	payment := models.RecheckReason{Category: models.CategoryPayment, Comments: "UTR missing"}
+	emi := models.RecheckReason{Category: models.CategoryEmi, Comments: " Tenor differs from the CC "}
+	if code, _ := raise(); code != http.StatusBadRequest {
+		t.Fatalf("no reasons: %d", code)
+	}
+	if code, _ := raise(payment, payment); code != http.StatusBadRequest {
+		t.Fatalf("the same category twice: %d", code)
+	}
+	if code, _ := raise(payment, models.RecheckReason{Category: models.CategoryEmi}); code != http.StatusBadRequest {
+		t.Fatalf("a reason without comments: %d", code)
+	}
+	code, recheck := raise(payment, emi)
+	if code != http.StatusOK || len(recheck.Reasons) != 2 || recheck.Reasons[1].Comments != "Tenor differs from the CC" ||
+		recheck.Category != models.CategoryPayment || recheck.Comments != "Payment: UTR missing; EMI: Tenor differs from the CC" {
+		t.Fatalf("raise: %d %+v", code, recheck)
+	}
+	if !strings.Contains(recheck.Alert.Subject, "Payment, EMI") {
+		t.Fatalf("the mail subject names every reason: %q", recheck.Alert.Subject)
+	}
+	// Filtering by the second reason's category finds the ticket and its lead.
+	var tickets []models.Recheck
+	call(e, "north@example.com", http.MethodGet, "/rechecks?scope=all&category=emi", nil, &tickets)
+	if len(tickets) != 1 {
+		t.Fatalf("tickets by the second reason: %d", len(tickets))
+	}
+	var leads models.Page[models.Lead]
+	call(e, "north@example.com", http.MethodGet, "/leads?recheckCategory=emi", nil, &leads)
+	if leads.Total != 1 {
+		t.Fatalf("leads by the second reason: %d", leads.Total)
+	}
+	var dashboard models.BdaDashboard
+	call(e, "bda@example.com", http.MethodGet, "/dashboard/bda", nil, &dashboard)
+	if dashboard.Totals.ByCategory[models.CategoryPayment] != 1 || dashboard.Totals.ByCategory[models.CategoryEmi] != 1 {
+		t.Fatalf("each reason counts under its category: %+v", dashboard.Totals.ByCategory)
+	}
+}
+
+func TestRecheckSearchAndListFilters(t *testing.T) {
+	e := setup(t)
+	call(e, "tl@example.com", http.MethodPost, "/zoho/import", zohoLearners(1, 2), nil)
+	for _, lead := range e.data.Leads {
+		body := map[string]string{"leadId": lead.ID, "category": models.CategoryPayment, "comments": "UTR missing for " + lead.ZenID}
+		if code := call(e, lead.Assignment.AuditorEmail, http.MethodPost, "/rechecks", body, nil); code != http.StatusOK {
+			t.Fatalf("raise on %s: %d", lead.ZenID, code)
+		}
+	}
+	count := func(query string) int {
+		var tickets []models.Recheck
+		if code := call(e, "tl@example.com", http.MethodGet, "/rechecks?scope=all&"+query, nil, &tickets); code != http.StatusOK {
+			t.Fatalf("%s: %d", query, code)
+		}
+		return len(tickets)
+	}
+	if got := count("search=RC-000002"); got != 1 {
+		t.Fatalf("search by recheck number: %d", got)
+	}
+	if got := count("search=utr+missing"); got != 3 {
+		t.Fatalf("search by comments: %d", got)
+	}
+	if got := count("auditorEmail=north@example.com,south1@example.com,south2@example.com"); got != 3 {
+		t.Fatalf("several auditors: %d", got)
+	}
+	if got := count("auditorEmail=north@example.com"); got != 1 {
+		t.Fatalf("one auditor: %d", got)
+	}
+	if got := count("bdaEmail=otherbda@example.com,bda@example.com"); got != 3 {
+		t.Fatalf("several BDAs: %d", got)
+	}
+}

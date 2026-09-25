@@ -126,7 +126,9 @@ func BdaStatsOf(bdas []models.Member, leads []models.Lead, rechecks []models.Rec
 		} else {
 			stats.RechecksClosed++
 		}
-		stats.ByCategory[recheck.Category]++
+		for _, reason := range ReasonsOf(recheck) {
+			stats.ByCategory[reason.Category]++
+		}
 	}
 	result := models.BdaDashboard{Bdas: []models.BdaStats{}, Totals: models.BdaStats{Name: "Total", ByCategory: map[string]int{}}}
 	for _, key := range order {

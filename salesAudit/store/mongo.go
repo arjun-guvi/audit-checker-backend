@@ -122,6 +122,15 @@ func withAnd(program string, conditions []bson.M) bson.M {
 	return scoped(program, bson.M{"$and": conditions})
 }
 
+// lowerAll lower-cases emails, which are stored lower-case.
+func lowerAll(values []string) []string {
+	result := make([]string, len(values))
+	for i, value := range values {
+		result[i] = strings.ToLower(value)
+	}
+	return result
+}
+
 // Members
 
 func findMemberByHash(ctx context.Context, program, userHash string) (models.Member, error) {
@@ -163,17 +172,17 @@ func leadFilter(program string, query models.LeadQuery) bson.M {
 	if len(query.AuditStatuses) > 0 {
 		conditions = append(conditions, bson.M{"audit.status": bson.M{"$in": query.AuditStatuses}})
 	}
-	if query.Region != "" {
-		conditions = append(conditions, bson.M{"region": query.Region})
+	if len(query.Regions) > 0 {
+		conditions = append(conditions, bson.M{"region": bson.M{"$in": query.Regions}})
 	}
-	if query.AuditorEmail != "" {
-		conditions = append(conditions, bson.M{"assignment.auditorEmail": strings.ToLower(query.AuditorEmail)})
+	if len(query.AuditorEmails) > 0 {
+		conditions = append(conditions, bson.M{"assignment.auditorEmail": bson.M{"$in": lowerAll(query.AuditorEmails)}})
 	}
-	if query.BdaEmail != "" {
-		conditions = append(conditions, bson.M{"bdaEmail": strings.ToLower(query.BdaEmail)})
+	if len(query.BdaEmails) > 0 {
+		conditions = append(conditions, bson.M{"bdaEmail": bson.M{"$in": lowerAll(query.BdaEmails)}})
 	}
-	if query.CcStatus != "" {
-		conditions = append(conditions, bson.M{"cc.status": query.CcStatus})
+	if len(query.CcStatuses) > 0 {
+		conditions = append(conditions, bson.M{"cc.status": bson.M{"$in": query.CcStatuses}})
 	}
 	if query.Unassigned {
 		conditions = append(conditions, bson.M{"assignment": nil})
@@ -273,14 +282,24 @@ func recheckFilter(program string, query models.RecheckQuery) bson.M {
 	if query.Status != "" {
 		conditions = append(conditions, bson.M{"status": query.Status})
 	}
-	if query.Category != "" {
-		conditions = append(conditions, bson.M{"category": query.Category})
+	if len(query.Categories) > 0 {
+		// reasons.category for rechecks with several reasons; category for older ones.
+		conditions = append(conditions, bson.M{"$or": bson.A{
+			bson.M{"reasons.category": bson.M{"$in": query.Categories}},
+			bson.M{"category": bson.M{"$in": query.Categories}},
+		}})
 	}
-	if query.AuditorEmail != "" {
-		conditions = append(conditions, bson.M{"auditorEmail": strings.ToLower(query.AuditorEmail)})
+	if len(query.AuditorEmails) > 0 {
+		conditions = append(conditions, bson.M{"auditorEmail": bson.M{"$in": lowerAll(query.AuditorEmails)}})
 	}
-	if query.BdaEmail != "" {
-		conditions = append(conditions, bson.M{"bdaEmail": strings.ToLower(query.BdaEmail)})
+	if len(query.BdaEmails) > 0 {
+		conditions = append(conditions, bson.M{"bdaEmail": bson.M{"$in": lowerAll(query.BdaEmails)}})
+	}
+	if search := strings.TrimSpace(query.Search); search != "" {
+		pattern := bson.M{"$regex": regexp.QuoteMeta(search), "$options": "i"}
+		conditions = append(conditions, bson.M{"$or": []bson.M{
+			{"recheckNo": pattern}, {"leadName": pattern}, {"zenId": pattern}, {"comments": pattern},
+		}})
 	}
 	if core.IsSet(query.Raised) {
 		conditions = append(conditions, bson.M{"raisedAt": rangeFilter(query.Raised)})

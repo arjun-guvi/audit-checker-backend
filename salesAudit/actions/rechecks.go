@@ -29,9 +29,10 @@ func ListRechecks(ctx context.Context, member models.Member, params RecheckListP
 	return store.FindRechecks(ctx, member.Program, query)
 }
 
-// RaiseRecheck is POST /rechecks: ends the current audit attempt with a recheck, alerts the BDA
-// and BDM in the portal and by mail (with the recheck number and the lead).
-func RaiseRecheck(ctx context.Context, member models.Member, leadID, category, comments string) (models.Recheck, error) {
+// RaiseRecheck is POST /rechecks: ends the current audit attempt with a recheck listing every
+// reason to fix, alerts the BDA and BDM in the portal and by mail (with the recheck number and the
+// lead).
+func RaiseRecheck(ctx context.Context, member models.Member, leadID string, reasons []models.RecheckReason) (models.Recheck, error) {
 	if !core.Can(member.Role, core.ActionRaiseRecheck) {
 		return models.Recheck{}, forbidden("Only auditors can raise a recheck")
 	}
@@ -39,7 +40,12 @@ func RaiseRecheck(ctx context.Context, member models.Member, leadID, category, c
 	if err != nil {
 		return models.Recheck{}, err
 	}
-	if err := core.CheckRaiseRecheck(member, lead, category, comments); err != nil {
+	cleaned := make([]models.RecheckReason, len(reasons))
+	for i, reason := range reasons {
+		cleaned[i] = models.RecheckReason{Category: reason.Category, Comments: strings.TrimSpace(reason.Comments)}
+	}
+	reasons = cleaned
+	if err := core.CheckRaiseRecheck(member, lead, reasons); err != nil {
 		if errors.Is(err, core.ErrNotAssigned) {
 			return models.Recheck{}, forbidden(err.Error())
 		}
@@ -60,7 +66,7 @@ func RaiseRecheck(ctx context.Context, member models.Member, leadID, category, c
 	recheck := models.Recheck{
 		ID: core.NewID(), Program: member.Program, RecheckNo: core.RecheckNo(sequence), Source: models.SourcePortal,
 		LeadID: lead.ID, LeadName: lead.Personal.Name, ZenID: lead.ZenID, Attempt: attempt,
-		Category: category, Comments: strings.TrimSpace(comments), Status: models.RecheckOpen,
+		Category: reasons[0].Category, Comments: core.SummarizeReasons(reasons), Reasons: reasons, Status: models.RecheckOpen,
 		RaisedBy: core.ActorOf(member), RaisedAt: now, BdaEmail: lead.BdaEmail, BdmEmail: lead.BdmEmail,
 		AuditorEmail: core.AuditorOf(lead), Created: models.Created{At: now, By: member.UserHash},
 	}
@@ -91,11 +97,12 @@ func RaiseRecheck(ctx context.Context, member models.Member, leadID, category, c
 		return recheck, err
 	}
 	RecordEvent(ctx, member.Program, lead.ID, models.EventRecheckRaised, core.ActorOf(member), now, map[string]any{
-		"recheckId": recheck.ID, "recheckNo": recheck.RecheckNo, "category": category, "comments": recheck.Comments, "attempt": attempt,
+		"recheckId": recheck.ID, "recheckNo": recheck.RecheckNo, "category": recheck.Category, "comments": recheck.Comments,
+		"reasons": reasons, "attempt": attempt,
 	})
 	Notify(ctx, member.Program, []string{lead.BdaEmail, lead.BdmEmail}, models.Notification{
 		Type: models.NotifyRecheckRaised, LeadID: lead.ID, RecheckID: recheck.ID,
-		Title:   fmt.Sprintf("Recheck %s raised: %s", recheck.RecheckNo, models.RecheckCategories[category]),
+		Title:   fmt.Sprintf("Recheck %s raised: %s", recheck.RecheckNo, core.ReasonLabels(reasons)),
 		Message: fmt.Sprintf("%s on %s: %s", core.FirstNonEmpty(member.Name, member.Email), lead.Personal.Name, recheck.Comments),
 		Created: models.Created{By: member.UserHash},
 	})

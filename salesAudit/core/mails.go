@@ -95,7 +95,7 @@ func PaymentVerificationSubject(lead models.Lead) string {
 }
 
 func RecheckSubject(recheck models.Recheck) string {
-	return fmt.Sprintf("Recheck %s raised (%s): %s", recheck.RecheckNo, models.RecheckCategories[recheck.Category], recheck.LeadName)
+	return fmt.Sprintf("Recheck %s raised (%s): %s", recheck.RecheckNo, ReasonLabels(ReasonsOf(recheck)), recheck.LeadName)
 }
 
 func RecheckReminderSubject(recheck models.Recheck) string {
@@ -210,20 +210,22 @@ func RecheckBody(recheck models.Recheck, lead models.Lead) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, `<p>Hi,</p><p>The audit team raised recheck <b>%s</b> on <b>%s</b>. Please fix the issue below and close the ticket in the Sales Audit portal.</p>`,
 		html.EscapeString(recheck.RecheckNo), html.EscapeString(leadName(lead)))
-	b.WriteString(table(append([][2]string{
-		{"Recheck ID", recheck.RecheckNo},
-		{"Category", models.RecheckCategories[recheck.Category]},
-		{"Comments", recheck.Comments},
-		{"Raised by", FirstNonEmpty(recheck.RaisedBy.Name, recheck.RaisedBy.Email)},
-		{"Raised at", FormatTime(recheck.RaisedAt) + " IST"},
-	}, leadRows(lead)...)...))
+	rows := [][2]string{{"Recheck ID", recheck.RecheckNo}}
+	for _, reason := range ReasonsOf(recheck) {
+		rows = append(rows, [2]string{models.RecheckCategories[reason.Category], reason.Comments})
+	}
+	rows = append(rows,
+		[2]string{"Raised by", FirstNonEmpty(recheck.RaisedBy.Name, recheck.RaisedBy.Email)},
+		[2]string{"Raised at", FormatTime(recheck.RaisedAt) + " IST"},
+	)
+	b.WriteString(table(append(rows, leadRows(lead)...)...))
 	b.WriteString(mailFooter)
 	return b.String()
 }
 
 func RecheckReminderBody(recheck models.Recheck) string {
 	return fmt.Sprintf(`<p>Hi,</p><p>Recheck <b>%s</b> (%s) on <b>%s</b> is still open. It was raised on %s IST.</p><p>Comments: %s</p>`,
-		html.EscapeString(recheck.RecheckNo), html.EscapeString(models.RecheckCategories[recheck.Category]),
+		html.EscapeString(recheck.RecheckNo), html.EscapeString(ReasonLabels(ReasonsOf(recheck))),
 		html.EscapeString(recheck.LeadName), html.EscapeString(FormatTime(recheck.RaisedAt)), html.EscapeString(recheck.Comments)) + mailFooter
 }
 

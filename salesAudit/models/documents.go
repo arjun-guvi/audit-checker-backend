@@ -246,17 +246,21 @@ type ChecklistItem struct {
 // Recheck is a ticket raised on a lead (salesAuditRechecks). Zoho's recheckDetails are imported
 // as rechecks with source "zoho" and their SRID as recheckNo.
 type Recheck struct {
-	ID           string          `bson:"id" json:"id"`
-	Program      string          `bson:"program" json:"-"`
-	RecheckNo    string          `bson:"recheckNo" json:"recheckNo"`
-	Source       string          `bson:"source" json:"source"`
-	LeadID       string          `bson:"leadId" json:"leadId"`
-	LeadName     string          `bson:"leadName" json:"leadName"`
-	ZenID        string          `bson:"zenId" json:"zenId"`
-	AuditID      string          `bson:"auditId" json:"auditId"`
-	Attempt      int             `bson:"attempt" json:"attempt"`
+	ID        string `bson:"id" json:"id"`
+	Program   string `bson:"program" json:"-"`
+	RecheckNo string `bson:"recheckNo" json:"recheckNo"`
+	Source    string `bson:"source" json:"source"`
+	LeadID    string `bson:"leadId" json:"leadId"`
+	LeadName  string `bson:"leadName" json:"leadName"`
+	ZenID     string `bson:"zenId" json:"zenId"`
+	AuditID   string `bson:"auditId" json:"auditId"`
+	Attempt   int    `bson:"attempt" json:"attempt"`
+	// Reasons are what the BDA must fix, one category and comment each. Category (the first
+	// reason's) and Comments (every reason in one line) are kept for lists, mails and rechecks
+	// stored before there could be several reasons; use core.ReasonsOf to read them.
 	Category     string          `bson:"category" json:"category"`
 	Comments     string          `bson:"comments" json:"comments"`
+	Reasons      []RecheckReason `bson:"reasons" json:"reasons"`
 	Status       string          `bson:"status" json:"status"`
 	RaisedBy     Actor           `bson:"raisedBy" json:"raisedBy"`
 	RaisedAt     int64           `bson:"raisedAt" json:"raisedAt"`
@@ -269,6 +273,12 @@ type Recheck struct {
 	LastReminder *Mail           `bson:"lastReminder" json:"lastReminder"`
 	Created      Created         `bson:"created" json:"-"`
 	Deleted      bool            `bson:"deleted" json:"-"`
+}
+
+// RecheckReason is one thing to fix on a recheck.
+type RecheckReason struct {
+	Category string `bson:"category" json:"category"`
+	Comments string `bson:"comments" json:"comments"`
 }
 
 type RecheckClosure struct {
