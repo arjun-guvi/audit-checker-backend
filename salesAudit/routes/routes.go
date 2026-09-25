@@ -45,6 +45,7 @@ func Register(engine *gin.Engine) {
 
 	group.GET("/alerts", view, controllers.GetAlerts)
 	group.POST("/zoho/import", edit, controllers.ImportZoho)
+	group.POST("/zoho/backfill", edit, controllers.BackfillZoho)
 	group.POST("/payment-verification/run-sweep", edit, controllers.RunPaymentVerificationSweep)
 	group.POST("/test-mail", edit, controllers.SendTestMail)
 }

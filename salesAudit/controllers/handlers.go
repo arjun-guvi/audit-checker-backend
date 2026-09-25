@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"auditApp/config"
 	"auditApp/salesAudit/actions"
 	"auditApp/salesAudit/core"
 	"auditApp/salesAudit/models"
@@ -377,6 +378,37 @@ func ImportZoho(c *gin.Context) {
 		err = importErr
 	}
 	reply(c, gin.H{"import": imported, "assignment": assigned}, err)
+}
+
+// BackfillZoho: POST /zoho/backfill {"from": "2026-09-01", "to": "2026-09-30"} (auditor TL).
+// Imports every learner enrolled in the range from Zoho, 5 days per Zoho call, into this
+// server's database, and assigns the new leads. Sends no mails or notifications. Dates are
+// YYYY-MM-DD or DD-Mon-YYYY; a missing one falls back to ZOHO_API_FROM / ZOHO_API_TO.
+func BackfillZoho(c *gin.Context) {
+	who, ok := requireTl(c)
+	if !ok {
+		return
+	}
+	var input struct {
+		From string `json:"from"`
+		To   string `json:"to"`
+	}
+	if err := c.ShouldBindJSON(&input); err != nil && !errors.Is(err, io.EOF) {
+		respondError(c, http.StatusBadRequest, "Body must be {\"from\": \"YYYY-MM-DD\", \"to\": \"YYYY-MM-DD\"}")
+		return
+	}
+	from, fromOk := core.ParseZohoTime(core.FirstNonEmpty(input.From, config.GetEnv("ZOHO_API_FROM", "")))
+	to, toOk := core.ParseZohoTime(core.FirstNonEmpty(input.To, config.GetEnv("ZOHO_API_TO", "")))
+	switch {
+	case !fromOk || !toOk:
+		respondError(c, http.StatusBadRequest, "from and to are required dates (YYYY-MM-DD), in the body or as ZOHO_API_FROM / ZOHO_API_TO")
+	case from > to:
+		respondError(c, http.StatusBadRequest, "from must not be after to")
+	case to-from > 366*24*60*60:
+		respondError(c, http.StatusBadRequest, "Backfill at most a year at a time")
+	default:
+		reply(c, actions.BackfillZoho(c, who.Program, core.ActorOf(who), time.Unix(from, 0), time.Unix(to, 0)), nil)
+	}
 }
 
 // RunPaymentVerificationSweep: POST /payment-verification/run-sweep (auditor TL). Runs the sweep

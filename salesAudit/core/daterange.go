@@ -81,3 +81,31 @@ func InRange(span models.Range, seconds int64) bool {
 func IsSet(span models.Range) bool {
 	return span.From != 0 || span.To != 0
 }
+
+// ZohoDay is how the Zoho learner API takes from/to dates.
+const ZohoDay = "02-Jan-2006"
+
+// ZohoChunks splits the IST days from..to (both inclusive) into windows of days, oldest first,
+// as Zoho from/to pairs: 1-Sep..30-Sep by 5 is 01-Sep..05-Sep, 06-Sep..10-Sep, …, 26-Sep..30-Sep.
+func ZohoChunks(from, to time.Time, days int) [][2]string {
+	if days < 1 {
+		days = 1
+	}
+	start := dayOf(from)
+	end := dayOf(to)
+	chunks := [][2]string{}
+	for !start.After(end) {
+		last := start.AddDate(0, 0, days-1)
+		if last.After(end) {
+			last = end
+		}
+		chunks = append(chunks, [2]string{start.Format(ZohoDay), last.Format(ZohoDay)})
+		start = last.AddDate(0, 0, 1)
+	}
+	return chunks
+}
+
+func dayOf(value time.Time) time.Time {
+	local := value.In(IST)
+	return time.Date(local.Year(), local.Month(), local.Day(), 0, 0, 0, 0, IST)
+}

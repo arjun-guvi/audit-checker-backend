@@ -40,6 +40,19 @@ func smtpConfigured() bool {
 	return config.SMTPHost != "" && config.SMTPUsername != "" && config.SMTPPassword != "" && config.SMTPFrom != ""
 }
 
+type alertsOffKey struct{}
+
+// WithoutAlerts marks ctx so Notify and Mail do nothing: a backfill writes data without telling
+// anyone about it.
+func WithoutAlerts(ctx context.Context) context.Context {
+	return context.WithValue(ctx, alertsOffKey{}, true)
+}
+
+func alertsOff(ctx context.Context) bool {
+	off, _ := ctx.Value(alertsOffKey{}).(bool)
+	return off
+}
+
 // RecordEvent adds a step to the lead's timeline. A failure is logged, not returned: the action
 // it describes has already happened.
 func RecordEvent(ctx context.Context, program, leadID, eventType string, actor models.Actor, at int64, data map[string]any) {
@@ -57,6 +70,9 @@ func RecordEvent(ctx context.Context, program, leadID, eventType string, actor m
 
 // Notify adds an in-app notification for each recipient; failures are logged.
 func Notify(ctx context.Context, program string, recipients []string, template models.Notification) {
+	if alertsOff(ctx) {
+		return
+	}
 	now := nowSeconds()
 	for _, email := range core.NonEmpty(recipients...) {
 		notification := template
@@ -73,6 +89,9 @@ func Notify(ctx context.Context, program string, recipients []string, template m
 // Mail logs a mail and queues it. The mail stays logged even if queueing fails, so the UI still
 // shows that it was raised.
 func Mail(ctx context.Context, program, by, leadID, kind, trigger string, to []string, subject, body string) (models.Mail, error) {
+	if alertsOff(ctx) {
+		return models.Mail{}, nil
+	}
 	now := nowSeconds()
 	mail := models.Mail{To: core.NonEmpty(to...), Subject: subject, Trigger: trigger, SentAt: now}
 	alert := models.Alert{

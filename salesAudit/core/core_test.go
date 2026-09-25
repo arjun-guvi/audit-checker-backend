@@ -222,3 +222,59 @@ func TestCompareFlagsMismatches(t *testing.T) {
 		t.Fatal("the fee mismatch and missing course fields should count")
 	}
 }
+
+func TestZohoChunks(t *testing.T) {
+	day := func(d int) time.Time { return time.Date(2026, 9, d, 15, 0, 0, 0, core.IST) }
+	cases := []struct {
+		name     string
+		from, to time.Time
+		want     [][2]string
+	}{
+		{"exact", day(1), day(10), [][2]string{{"01-Sep-2026", "05-Sep-2026"}, {"06-Sep-2026", "10-Sep-2026"}}},
+		{"remainder", day(1), day(12), [][2]string{{"01-Sep-2026", "05-Sep-2026"}, {"06-Sep-2026", "10-Sep-2026"}, {"11-Sep-2026", "12-Sep-2026"}}},
+		{"one day", day(7), day(7), [][2]string{{"07-Sep-2026", "07-Sep-2026"}}},
+		{"backwards", day(7), day(6), [][2]string{}},
+		{"across months", day(29), time.Date(2026, 10, 2, 0, 0, 0, 0, core.IST), [][2]string{{"29-Sep-2026", "02-Oct-2026"}}},
+	}
+	for _, test := range cases {
+		got := core.ZohoChunks(test.from, test.to, 5)
+		if len(got) != len(test.want) {
+			t.Fatalf("%s: got %v, want %v", test.name, got, test.want)
+		}
+		for index := range got {
+			if got[index] != test.want[index] {
+				t.Fatalf("%s: got %v, want %v", test.name, got, test.want)
+			}
+		}
+	}
+	if got := core.ZohoChunks(day(1), day(30), 5); len(got) != 6 || got[5] != [2]string{"26-Sep-2026", "30-Sep-2026"} {
+		t.Fatalf("1..30 by 5: got %v", got)
+	}
+}
+
+func TestSalesPairsFromZoho(t *testing.T) {
+	learner := func(bda, bdm string) models.ZohoLearner {
+		return models.ZohoLearner{SaleOwner: models.ZohoValue(bda), SaleOwnerManager: models.ZohoValue(bdm)}
+	}
+	pairs := core.SalesPairsFromZoho([]models.ZohoLearner{
+		learner("Asha - BDA1@Example.com", "bdm1@example.com"),
+		learner("bda1@example.com", ""),
+		learner("bda2@example.com", "bdm1@example.com"),
+		learner("", "bdm2@example.com"),
+		learner("bda1@example.com", "bdm2@example.com"),
+		learner("", ""),
+	})
+	want := []core.SalesPair{
+		{BdaEmail: "bda1@example.com", BdmEmail: "bdm2@example.com"},
+		{BdaEmail: "bda2@example.com", BdmEmail: "bdm1@example.com"},
+		{BdaEmail: "", BdmEmail: "bdm2@example.com"},
+	}
+	if len(pairs) != len(want) {
+		t.Fatalf("got %+v", pairs)
+	}
+	for index := range want {
+		if pairs[index] != want[index] {
+			t.Fatalf("pair %d: got %+v, want %+v", index, pairs[index], want[index])
+		}
+	}
+}

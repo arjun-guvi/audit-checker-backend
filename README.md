@@ -97,12 +97,39 @@ curl -X POST http://localhost:8080/sales-audit/zoho/import \
 
 Never import real Zoho exports into a dev database, and never commit them.
 
+### Live data (`audit_live`)
+
+`audit_app` holds the mock data above. Real Zoho data goes into a separate database, `audit_live`, and the server uses whichever one `MONGO_DATABASE` names, so switching is just a `.env` change and a restart:
+
+```bash
+MONGO_DATABASE=audit_app    # mock data
+MONGO_DATABASE=audit_live   # real Zoho data
+```
+
+Set up `audit_live` once: create its indexes, then add the real auditor TL and auditors (with their Zen user hashes) through a script or `POST /members`, since the backfill needs a TL signed in to that database.
+
+```bash
+mongosh "$MONGO_URI/audit_live" salesAudit/scripts/indexes.js
+```
+
+Then fill it from Zoho for a date range. The server calls Zoho 5 days at a time (1–30 Sep is 01–05, 06–10, …, 26–30), oldest first. For each window it adds the BDAs and BDMs Zoho names (`saleOwner`, `saleOwnerManager`) as members, with each BDA's `managerEmail` set to their BDM, then imports the learners and assigns the new leads. It sends **no mails or notifications**. Running it again over the same days is safe: leads match on `zenId` and rechecks on `SRID`.
+
+```bash
+curl -X POST http://localhost:8080/sales-audit/zoho/backfill \
+  -H "Authorization: <TL user hash>" -H "Content-Type: application/json" \
+  -d '{"from": "2026-09-01", "to": "2026-09-30"}'
+```
+
+The reply lists every window (`from`, `to`, `fetched`, `members`, `import`, `assignment`, and `error` if it failed). A failed window doesn't stop the rest; re-run just those dates. With no body, it uses `ZOHO_API_FROM` / `ZOHO_API_TO`. At most a year per request. Each Zoho call can take up to 2 minutes, so for long ranges make sure any proxy in front of the server allows long requests, or backfill a month at a time.
+
+BDA and BDM members added this way have no `userHash`, so they can't sign in until the TL sets it with `PUT /members/:memberId`.
+
 ## 2. Environment variables
 
 | Variable | Default | Purpose |
 |---|---|---|
 | `HOST`, `PORT` | `127.0.0.1`, `8080` | HTTP listen address |
-| `MONGO_URI`, `MONGO_DATABASE` | `mongodb://localhost:27017`, `audit_app` | MongoDB |
+| `MONGO_URI`, `MONGO_DATABASE` | `mongodb://localhost:27017`, `audit_app` | MongoDB. `audit_app` is mock data; set `audit_live` for real Zoho data (see *Live data*) |
 | `REDIS_HOST`, `REDIS_PASSWORD` | `localhost:6379`, empty | Redis for the worker queue |
 | `SALES_AUDIT_PROGRAM` | `guvi` | The program (tenant) the mock auth puts in the context |
 | `ACCOUNTS_EMAIL` | empty | Copied on payment escalation mails |
@@ -110,7 +137,7 @@ Never import real Zoho exports into a dev database, and never commit them.
 | `ZOHO_API_URL` | the Zoho Creator learner API | Learner import |
 | `ZOHO_API_PUBLIC_KEY` | empty | Zoho public key. The import fails without it. |
 | `ZOHO_SYNC_LOOKBACK_DAYS` | `3` | The import fetches enrolments from the last N days |
-| `ZOHO_API_FROM`, `ZOHO_API_TO` | empty | Set both (DD-Mon-YYYY) to fetch a fixed window instead |
+| `ZOHO_API_FROM`, `ZOHO_API_TO` | empty | Set both (DD-Mon-YYYY) to fetch a fixed window instead. Also the default range of `POST /zoho/backfill` |
 
 ## 3. The flow
 
@@ -190,6 +217,7 @@ Date filters take either:
 | POST | `/notifications/read-all` | edit | all | Mark all notifications read |
 | GET | `/alerts?since=` | view | auditors | Mail log |
 | POST | `/zoho/import` | edit | TL | Import a Zoho response (sent as the body), or fetch the sync window (empty body); then assign |
+| POST | `/zoho/backfill` | edit | TL | `{from, to}` (YYYY-MM-DD): import that range from Zoho 5 days per call, add BDA/BDM members, assign. No mails or notifications |
 | POST | `/payment-verification/run-sweep` | edit | TL | Run the BDM payment-verification sweep now |
 | POST | `/test-mail` | edit | TL | `{to}`: send one mail straight over SMTP |
 

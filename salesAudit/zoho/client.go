@@ -35,7 +35,7 @@ func Window(now time.Time) (from, to string) {
 		days = 3
 	}
 	today := now.In(core.IST)
-	return today.AddDate(0, 0, -days).Format("02-Jan-2006"), today.Format("02-Jan-2006")
+	return today.AddDate(0, 0, -days).Format(core.ZohoDay), today.Format(core.ZohoDay)
 }
 
 func fetch(ctx context.Context, from, to string) ([]models.ZohoLearner, error) {

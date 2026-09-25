@@ -18,6 +18,7 @@ import (
 	"auditApp/salesAudit/models"
 	"auditApp/salesAudit/routes"
 	"auditApp/salesAudit/store/fake"
+	"auditApp/salesAudit/zoho"
 
 	"github.com/gin-gonic/gin"
 )
@@ -507,4 +508,86 @@ func TestCcUpdatedButTicketOpen(t *testing.T) {
 	if len(flagged) != 0 {
 		t.Fatalf("closed tickets are not flagged: %d", len(flagged))
 	}
+}
+
+func TestZohoBackfillInFiveDayWindows(t *testing.T) {
+	e := setup(t)
+	windows := [][2]string{}
+	fetch := zoho.Fetch
+	t.Cleanup(func() { zoho.Fetch = fetch })
+	zoho.Fetch = func(_ context.Context, from, to string) ([]models.ZohoLearner, error) {
+		windows = append(windows, [2]string{from, to})
+		if len(windows) > 1 {
+			return nil, nil
+		}
+		// Two BDAs, one BDM: the first learner is sold by one BDA, the other two by another.
+		owner := `"saleOwner":"bda@example.com","saleOwnerManager":"bdm@example.com"`
+		body := strings.Replace(zohoLearners(1, 2), owner, `"saleOwner":"Ravi - New.BDA@example.com","saleOwnerManager":"new.bdm@example.com"`, 1)
+		body = strings.ReplaceAll(body, owner, `"saleOwner":"new.bda2@example.com","saleOwnerManager":"New.BDM@example.com"`)
+		return zoho.Decode([]byte(body))
+	}
+
+	if code := call(e, "bda@example.com", http.MethodPost, "/zoho/backfill", map[string]string{"from": "2026-09-01", "to": "2026-09-12"}, nil); code != http.StatusForbidden {
+		t.Fatalf("a BDA backfilled: %d", code)
+	}
+	if code := call(e, "tl@example.com", http.MethodPost, "/zoho/backfill", map[string]string{"from": "2026-09-12", "to": "2026-09-01"}, nil); code != http.StatusBadRequest {
+		t.Fatalf("backwards range: %d", code)
+	}
+
+	var result actions.BackfillResult
+	if code := call(e, "tl@example.com", http.MethodPost, "/zoho/backfill", map[string]string{"from": "2026-09-01", "to": "2026-09-12"}, &result); code != http.StatusOK {
+		t.Fatalf("backfill: %d", code)
+	}
+	want := [][2]string{{"01-Sep-2026", "05-Sep-2026"}, {"06-Sep-2026", "10-Sep-2026"}, {"11-Sep-2026", "12-Sep-2026"}}
+	if fmt.Sprint(windows) != fmt.Sprint(want) || len(result.Chunks) != 3 || result.Failed != 0 {
+		t.Fatalf("windows %v, result %+v", windows, result)
+	}
+	first := result.Chunks[0]
+	if first.Fetched != 3 || first.Import.Created != 3 || first.Assignment.Assigned != 3 || first.Members.Created != 3 {
+		t.Fatalf("first window: %+v", first)
+	}
+
+	for _, email := range []string{"new.bda@example.com", "new.bda2@example.com"} {
+		bda, _ := findMember(e, email)
+		if bda.Role != models.RoleBda || bda.ManagerEmail != "new.bdm@example.com" || bda.UserHash != "" {
+			t.Fatalf("BDA from Zoho: %+v", bda)
+		}
+	}
+	bdms := 0
+	for index, member := range e.data.Members {
+		if member.Email == "new.bdm@example.com" {
+			bdms++
+			if member.Role != models.RoleBdm {
+				t.Fatalf("BDM from Zoho: %+v", member)
+			}
+			e.data.Members[index].UserHash = "hash-new.bdm@example.com" // linked to Zen, so it can sign in
+		}
+	}
+	if bdms != 1 {
+		t.Fatalf("%d BDM members for one BDM", bdms)
+	}
+
+	// The BDM's team is both BDAs, and the BDM sees every lead of both.
+	var me models.CurrentUser
+	call(e, "new.bdm@example.com", http.MethodGet, "/me", nil, &me)
+	if fmt.Sprint(me.TeamEmails) != "[new.bda@example.com new.bda2@example.com]" {
+		t.Fatalf("BDM team: %v", me.TeamEmails)
+	}
+	var page models.Page[models.Lead]
+	call(e, "new.bdm@example.com", http.MethodGet, "/leads", nil, &page)
+	if page.Total != 3 {
+		t.Fatalf("BDM sees %d leads, want 3", page.Total)
+	}
+	if len(e.data.Alerts) != 0 || len(e.data.Notifications) != 0 || len(*e.mails) != 0 {
+		t.Fatalf("backfill alerted: %d alerts, %d notifications, %d mails", len(e.data.Alerts), len(e.data.Notifications), len(*e.mails))
+	}
+}
+
+func findMember(e env, email string) (models.Member, bool) {
+	for _, member := range e.data.Members {
+		if member.Email == email {
+			return member, true
+		}
+	}
+	return models.Member{}, false
 }

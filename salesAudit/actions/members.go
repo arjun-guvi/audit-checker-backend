@@ -137,3 +137,56 @@ func UpdateMember(ctx context.Context, by models.Member, memberID string, input 
 	}
 	return member, store.ReplaceMember(ctx, member)
 }
+
+// MemberSync is what SyncSalesMembers did.
+type MemberSync struct {
+	Created int `json:"created"`
+	Updated int `json:"updated"`
+}
+
+// SyncSalesMembers adds the BDAs and BDMs Zoho names on the learners (saleOwner and
+// saleOwnerManager) and points each BDA's managerEmail at their BDM, which is what a BDM's team
+// and leads are worked out from. Existing members of other roles are left alone. Members added
+// here have no userHash, so they can't sign in until the TL links them to Zen.
+func SyncSalesMembers(ctx context.Context, program string, learners []models.ZohoLearner) (MemberSync, error) {
+	result := MemberSync{}
+	for _, pair := range core.SalesPairsFromZoho(learners) {
+		if pair.BdmEmail != "" {
+			if _, err := ensureSalesMember(ctx, program, pair.BdmEmail, models.RoleBdm, "", &result); err != nil {
+				return result, err
+			}
+		}
+		if pair.BdaEmail == "" {
+			continue
+		}
+		bda, err := ensureSalesMember(ctx, program, pair.BdaEmail, models.RoleBda, pair.BdmEmail, &result)
+		if err != nil {
+			return result, err
+		}
+		if bda.Role == models.RoleBda && pair.BdmEmail != "" && !strings.EqualFold(bda.ManagerEmail, pair.BdmEmail) {
+			bda.ManagerEmail = pair.BdmEmail
+			if err := store.ReplaceMember(ctx, bda); err != nil {
+				return result, err
+			}
+			result.Updated++
+		}
+	}
+	return result, nil
+}
+
+// ensureSalesMember returns the member with this email, adding it with the role when missing.
+func ensureSalesMember(ctx context.Context, program, email, role, managerEmail string, result *MemberSync) (models.Member, error) {
+	member, err := store.FindMemberByEmail(ctx, program, email)
+	if !store.IsNotFound(err) {
+		return member, err
+	}
+	member = models.Member{
+		ID: core.NewID(), Program: program, Email: email, Name: email, Role: role, ManagerEmail: managerEmail,
+		Available: true, Created: models.Created{At: nowSeconds(), By: models.SystemUser},
+	}
+	if err := store.InsertMember(ctx, member); err != nil {
+		return member, err
+	}
+	result.Created++
+	return member, nil
+}

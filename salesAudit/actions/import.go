@@ -6,10 +6,12 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"time"
 
 	"auditApp/salesAudit/core"
 	"auditApp/salesAudit/models"
 	"auditApp/salesAudit/store"
+	"auditApp/salesAudit/zoho"
 )
 
 // ImportResult is what one Zoho import did.
@@ -160,4 +162,63 @@ func importRechecks(ctx context.Context, lead models.Lead, zohoRechecks []models
 		}
 	}
 	return changed, nil
+}
+
+// BackfillDays is how many days of Zoho learners one backfill request fetches.
+const BackfillDays = 5
+
+// BackfillChunk is what one window of a backfill did.
+type BackfillChunk struct {
+	From       string       `json:"from"`
+	To         string       `json:"to"`
+	Fetched    int          `json:"fetched"`
+	Members    MemberSync   `json:"members"`
+	Import     ImportResult `json:"import"`
+	Assignment AssignResult `json:"assignment"`
+	Error      string       `json:"error,omitempty"`
+}
+
+// BackfillResult is every window of a backfill, in order.
+type BackfillResult struct {
+	Chunks []BackfillChunk `json:"chunks"`
+	Failed int             `json:"failed"`
+}
+
+// BackfillZoho imports the learners enrolled from..to (IST days, inclusive) BackfillDays at a
+// time, oldest first: each window's BDAs and BDMs are added as members, its learners imported,
+// and new leads assigned. No mails or notifications go out. A failed window is recorded and the
+// rest still run.
+func BackfillZoho(ctx context.Context, program string, actor models.Actor, from, to time.Time) BackfillResult {
+	ctx = WithoutAlerts(ctx)
+	result := BackfillResult{Chunks: []BackfillChunk{}}
+	for _, window := range core.ZohoChunks(from, to, BackfillDays) {
+		chunk := backfillWindow(ctx, program, actor, window[0], window[1])
+		if chunk.Error != "" {
+			result.Failed++
+		}
+		log.Printf("salesAudit: Zoho backfill %s..%s: %+v", chunk.From, chunk.To, chunk)
+		result.Chunks = append(result.Chunks, chunk)
+	}
+	return result
+}
+
+func backfillWindow(ctx context.Context, program string, actor models.Actor, from, to string) BackfillChunk {
+	chunk := BackfillChunk{From: from, To: to}
+	learners, err := zoho.Fetch(ctx, from, to)
+	if err != nil {
+		chunk.Error = err.Error()
+		return chunk
+	}
+	chunk.Fetched = len(learners)
+	var errs []error
+	chunk.Members, err = SyncSalesMembers(ctx, program, learners)
+	errs = append(errs, err)
+	chunk.Import, err = ImportLearners(ctx, program, learners)
+	errs = append(errs, err)
+	chunk.Assignment, err = AssignPending(ctx, program, actor)
+	errs = append(errs, err)
+	if err := errors.Join(errs...); err != nil {
+		chunk.Error = err.Error()
+	}
+	return chunk
 }
