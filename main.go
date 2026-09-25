@@ -71,7 +71,7 @@ func main() {
 
 	router.Use(cors.New(cors.Config{
 		AllowOrigins: []string{
-			"https://auditor-client.vercel.app/",
+			"https://auditor-client.vercel.app",
 		},
 		AllowMethods: []string{
 			"GET",
