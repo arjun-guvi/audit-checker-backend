@@ -37,7 +37,9 @@ func Register(engine *gin.Engine) {
 	group.POST("/rechecks/:recheckId/close", edit, controllers.CloseRecheck)
 
 	group.GET("/dashboard/auditor-team", view, controllers.GetTeamDashboard)
+	group.GET("/dashboard/auditor-team/summary", view, controllers.GetTeamDashboardSummary)
 	group.GET("/dashboard/bda", view, controllers.GetBdaDashboard)
+	group.GET("/dashboard/bda/summary", view, controllers.GetBdaDashboardSummary)
 
 	group.GET("/notifications", view, controllers.GetNotifications)
 	group.POST("/notifications/read-all", edit, controllers.ReadAllNotifications)

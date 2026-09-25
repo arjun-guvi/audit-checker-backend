@@ -111,6 +111,9 @@ Never import real Zoho exports into a dev database, and never commit them.
 | `ZOHO_API_PUBLIC_KEY` | empty | Zoho public key. The import fails without it. |
 | `ZOHO_SYNC_LOOKBACK_DAYS` | `3` | The import fetches enrolments from the last N days |
 | `ZOHO_API_FROM`, `ZOHO_API_TO` | empty | Set both (DD-Mon-YYYY) to fetch a fixed window instead |
+| `LLM_API_URL` | empty | Base URL of any OpenAI-compatible chat completions API (e.g. `https://api.openai.com/v1`); `/chat/completions` is added. Empty turns the dashboard summaries off |
+| `LLM_MODEL` | empty | The model to ask for the dashboard summaries |
+| `LLM_API_KEY` | empty | Sent as `Authorization: Bearer <key>`; leave empty for a server that needs none |
 
 ## 3. The flow
 
@@ -185,6 +188,7 @@ Date filters take either:
 | GET | `/rechecks/cc-status?status=updated\|pending` | view | auditors | Leads by CC status (paged) |
 | GET | `/dashboard/auditor-team?auditorEmail=&period…` | view | TL | Per auditor: assigned, open, audits done, completed, rechecks raised, per-day counts; recent audits |
 | GET | `/dashboard/bda?bdaEmail=&period…` | view | BDA, BDM | Leads, completed audits, rechecks (open / closed / by category), per BDA |
+| GET | `/dashboard/auditor-team/summary`, `/dashboard/bda/summary` | view | TL; BDM | One paragraph about the dashboard, written by the LLM (`LLM_*`) from the dashboard's figures (staff names and counts only, no learner details). Same filters as the dashboard, plus `refresh=true`. Reused for 15 min while the figures are unchanged. 503 when `LLM_*` is not set, 502 when the model fails |
 | GET | `/notifications?unread=true` | view | all | `{items, unread}` |
 | POST | `/notifications/:notificationId/read` | edit | all | Mark one notification read |
 | POST | `/notifications/read-all` | edit | all | Mark all notifications read |

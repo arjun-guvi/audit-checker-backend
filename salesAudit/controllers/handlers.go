@@ -305,6 +305,32 @@ func GetTeamDashboard(c *gin.Context) {
 	reply(c, dashboard, err)
 }
 
+// GetTeamDashboardSummary: GET /dashboard/auditor-team/summary, the same filters as the dashboard,
+// plus refresh=true to write a new summary even when the figures have not changed.
+func GetTeamDashboardSummary(c *gin.Context) {
+	span, err := queryRange(c, "period")
+	if err != nil {
+		respondError(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	summary, err := actions.TeamDashboardSummary(c, member(c), c.Query("auditorEmail"), span,
+		actions.PeriodLabel(c.Query("periodIn"), span), c.Query("refresh") == "true")
+	reply(c, summary, err)
+}
+
+// GetBdaDashboardSummary: GET /dashboard/bda/summary (BDM), the same filters as the dashboard, plus
+// refresh=true.
+func GetBdaDashboardSummary(c *gin.Context) {
+	span, err := queryRange(c, "period")
+	if err != nil {
+		respondError(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	summary, err := actions.BdaDashboardSummary(c, member(c), c.Query("bdaEmail"), span,
+		actions.PeriodLabel(c.Query("periodIn"), span), c.Query("refresh") == "true")
+	reply(c, summary, err)
+}
+
 // GetBdaDashboard: GET /dashboard/bda?bdaEmail=&periodIn=|periodFrom=&periodTo=
 func GetBdaDashboard(c *gin.Context) {
 	span, err := queryRange(c, "period")

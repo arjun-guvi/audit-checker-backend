@@ -166,6 +166,16 @@ type BdaStats struct {
 	ByCategory     map[string]int `json:"byCategory"`
 }
 
+// DashboardSummary is GET /dashboard/…/summary: one paragraph about the dashboard, written by
+// the configured LLM from the dashboard's figures.
+type DashboardSummary struct {
+	Summary     string `json:"summary"`
+	Model       string `json:"model"`
+	GeneratedAt int64  `json:"generatedAt"`
+	// Cached: the figures had not changed since this summary was written, so it was reused.
+	Cached bool `json:"cached"`
+}
+
 // BdaDashboard is GET /dashboard/bda.
 type BdaDashboard struct {
 	Totals BdaStats   `json:"totals"`

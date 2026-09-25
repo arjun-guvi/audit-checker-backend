@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math/rand"
 	"net/http"
@@ -15,6 +16,7 @@ import (
 	"auditApp/config"
 	"auditApp/salesAudit/actions"
 	"auditApp/salesAudit/core"
+	"auditApp/salesAudit/llm"
 	"auditApp/salesAudit/models"
 	"auditApp/salesAudit/routes"
 	"auditApp/salesAudit/store/fake"
@@ -506,5 +508,63 @@ func TestCcUpdatedButTicketOpen(t *testing.T) {
 	call(e, "bdm@example.com", http.MethodGet, "/rechecks?view=ccUpdatedNotClosed", nil, &flagged)
 	if len(flagged) != 0 {
 		t.Fatalf("closed tickets are not flagged: %d", len(flagged))
+	}
+}
+
+func TestDashboardSummaries(t *testing.T) {
+	e := setup(t)
+	call(e, "tl@example.com", http.MethodPost, "/zoho/import", zohoLearners(2, 4), nil)
+
+	// Not configured: the dashboard still works, the summary says what to set.
+	config.LLMAPIURL, config.LLMModel = "", ""
+	if code := call(e, "tl@example.com", http.MethodGet, "/dashboard/auditor-team/summary?periodIn=thisMonth", nil, nil); code != http.StatusServiceUnavailable {
+		t.Fatalf("not configured: %d", code)
+	}
+
+	config.LLMAPIURL, config.LLMModel = "http://llm.test/v1", "test-model"
+	t.Cleanup(func() { config.LLMAPIURL, config.LLMModel = "", "" })
+	prompts := []string{}
+	complete := llm.Complete
+	llm.Complete = func(_ context.Context, system, user string) (string, error) {
+		prompts = append(prompts, system+"\n"+user)
+		return "Six leads are open.\n\nNorth has two.", nil
+	}
+	t.Cleanup(func() { llm.Complete = complete })
+
+	var summary models.DashboardSummary
+	if code := call(e, "tl@example.com", http.MethodGet, "/dashboard/auditor-team/summary?periodIn=thisMonth", nil, &summary); code != http.StatusOK ||
+		summary.Summary != "Six leads are open. North has two." || summary.Model != "test-model" || summary.Cached {
+		t.Fatalf("team summary: %d %+v", code, summary)
+	}
+	if len(prompts) != 1 || !strings.Contains(prompts[0], `"leadsStillOpen":6`) || !strings.Contains(prompts[0], `"period":"this month"`) ||
+		strings.Contains(prompts[0], "learner0@example.com") {
+		t.Fatalf("the prompt carries the dashboard figures and no learner details: %s", prompts[0])
+	}
+	// Same figures: reused. refresh=true: written again.
+	call(e, "tl@example.com", http.MethodGet, "/dashboard/auditor-team/summary?periodIn=thisMonth", nil, &summary)
+	if !summary.Cached || len(prompts) != 1 {
+		t.Fatalf("cache: %+v, %d calls", summary, len(prompts))
+	}
+	call(e, "tl@example.com", http.MethodGet, "/dashboard/auditor-team/summary?periodIn=thisMonth&refresh=true", nil, &summary)
+	if summary.Cached || len(prompts) != 2 {
+		t.Fatalf("refresh: %+v, %d calls", summary, len(prompts))
+	}
+
+	// Only the TL gets the team summary, only the BDM the BDA one.
+	if code := call(e, "bdm@example.com", http.MethodGet, "/dashboard/auditor-team/summary", nil, nil); code != http.StatusForbidden {
+		t.Fatalf("BDM on the team summary: %d", code)
+	}
+	if code := call(e, "bda@example.com", http.MethodGet, "/dashboard/bda/summary", nil, nil); code != http.StatusForbidden {
+		t.Fatalf("BDA summary: %d", code)
+	}
+	if code := call(e, "bdm@example.com", http.MethodGet, "/dashboard/bda/summary", nil, &summary); code != http.StatusOK ||
+		!strings.Contains(prompts[len(prompts)-1], `"ccUpdatedButTicketStillOpen":[]`) || !strings.Contains(prompts[len(prompts)-1], `"leads":6`) {
+		t.Fatalf("BDM summary: %d %s", code, prompts[len(prompts)-1])
+	}
+
+	// A failing model is a 502 with a plain message, not a 500.
+	llm.Complete = func(context.Context, string, string) (string, error) { return "", errors.New("timeout") }
+	if code := call(e, "bdm@example.com", http.MethodGet, "/dashboard/bda/summary?refresh=true", nil, nil); code != http.StatusBadGateway {
+		t.Fatalf("model failure: %d", code)
 	}
 }

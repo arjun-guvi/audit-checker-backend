@@ -31,6 +31,11 @@ var (
 	ZohoAPIURL       string
 	ZohoAPIPublicKey string
 
+	// OpenAI-compatible chat completions API for the dashboard summaries
+	LLMAPIURL string
+	LLMAPIKey string
+	LLMModel  string
+
 	MongoClient *mongo.Client
 	MongoDB     *mongo.Database
 )
@@ -59,6 +64,10 @@ func LoadEnv() {
 	SMTPFrom = getEnv("SMTP_FROM", "")
 	ZohoAPIURL = getEnv("ZOHO_API_URL", "https://www.zohoapis.in/creator/custom/teamzen_guvi/Zen_Learner_Data")
 	ZohoAPIPublicKey = getEnv("ZOHO_API_PUBLIC_KEY", "")
+	// Leave LLM_API_URL or LLM_MODEL empty to turn the dashboard summaries off
+	LLMAPIURL = getEnv("LLM_API_URL", "")
+	LLMAPIKey = getEnv("LLM_API_KEY", "")
+	LLMModel = getEnv("LLM_MODEL", "")
 
 }
 
