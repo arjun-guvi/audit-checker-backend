@@ -50,6 +50,8 @@ type RecheckQuery struct {
 	ClosedIn Range
 	// AwaitingReaudit: closed and the lead not audited since.
 	AwaitingReaudit bool
+	// CcUpdatedOpen: open, and the lead's CC was updated after it was raised.
+	CcUpdatedOpen bool
 }
 
 // AuditQuery filters audit attempts.

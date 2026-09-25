@@ -2,6 +2,7 @@ package controllers_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"math/rand"
@@ -442,5 +443,68 @@ func TestRecheckSearchAndListFilters(t *testing.T) {
 	}
 	if got := count("bdaEmail=otherbda@example.com,bda@example.com"); got != 3 {
 		t.Fatalf("several BDAs: %d", got)
+	}
+}
+
+func TestCcUpdatedButTicketOpen(t *testing.T) {
+	e := setup(t)
+	withCc := zohoLearners(1, 0)
+	withoutCc := strings.Replace(withCc, `"confirmationCall":"https://drive.google.com/file/d/file0/view",`, "", 1)
+	call(e, "tl@example.com", http.MethodPost, "/zoho/import", withoutCc, nil)
+	lead := e.data.Leads[0]
+	raise := func(category string) models.Recheck {
+		var recheck models.Recheck
+		body := map[string]string{"leadId": lead.ID, "category": category, "comments": "fix it"}
+		if code := call(e, "north@example.com", http.MethodPost, "/rechecks", body, &recheck); code != http.StatusOK {
+			t.Fatalf("raise %s: %d", category, code)
+		}
+		return recheck
+	}
+	ccRecheck := raise(models.CategoryCcPending)
+	paymentRecheck := raise(models.CategoryPayment)
+
+	// The BDA puts the CC in Zoho an hour later but leaves the ticket open.
+	actions.Now = func() time.Time { return now.Add(time.Hour) }
+	call(e, "tl@example.com", http.MethodPost, "/zoho/import", withCc, nil)
+	var flagged []models.Recheck
+	call(e, "bdm@example.com", http.MethodGet, "/rechecks?view=ccUpdatedNotClosed", nil, &flagged)
+	if len(flagged) != 1 || flagged[0].ID != ccRecheck.ID || flagged[0].CcUpdatedAt != now.Add(time.Hour).Unix() ||
+		flagged[0].CcCloseAlert == nil || len(flagged[0].CcCloseAlert.To) != 2 {
+		t.Fatalf("only the CC recheck is flagged, with the BDA and BDM mailed: %+v", flagged)
+	}
+	var notifications actions.NotificationList
+	call(e, "bdm@example.com", http.MethodGet, "/notifications", nil, &notifications)
+	found := false
+	for _, notification := range notifications.Items {
+		found = found || (notification.Type == models.NotifyCcTicketOpen && notification.RecheckID == ccRecheck.ID)
+	}
+	if !found {
+		t.Fatalf("the BDM is told to close the ticket: %+v", notifications.Items)
+	}
+
+	// A day later the sweep alerts again, with the time since the CC update, instead of the
+	// ordinary reminder; the payment recheck still gets its ordinary reminder.
+	actions.Now = func() time.Time { return now.Add(25 * time.Hour) }
+	if sent, err := actions.RunRecheckReminderSweep(context.Background(), program); err != nil || sent != 2 {
+		t.Fatalf("sweep: %d %v", sent, err)
+	}
+	var after models.Recheck
+	for _, recheck := range e.data.Rechecks {
+		if recheck.ID == ccRecheck.ID {
+			after = recheck
+		}
+		if recheck.ID == paymentRecheck.ID && (recheck.LastReminder == nil || recheck.CcUpdatedAt != 0) {
+			t.Fatalf("payment recheck: %+v", recheck)
+		}
+	}
+	if after.LastReminder != nil || !strings.Contains(after.CcCloseAlert.Subject, "CC updated 1d 0h ago") {
+		t.Fatalf("CC recheck after the sweep: reminder %+v, alert %+v", after.LastReminder, after.CcCloseAlert)
+	}
+
+	// Once closed it no longer shows.
+	call(e, "bda@example.com", http.MethodPost, "/rechecks/"+ccRecheck.ID+"/close", map[string]string{"note": "CC uploaded"}, nil)
+	call(e, "bdm@example.com", http.MethodGet, "/rechecks?view=ccUpdatedNotClosed", nil, &flagged)
+	if len(flagged) != 0 {
+		t.Fatalf("closed tickets are not flagged: %d", len(flagged))
 	}
 }

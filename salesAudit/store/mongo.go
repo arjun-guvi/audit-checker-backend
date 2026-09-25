@@ -310,6 +310,9 @@ func recheckFilter(program string, query models.RecheckQuery) bson.M {
 	if query.AwaitingReaudit {
 		conditions = append(conditions, bson.M{"status": models.RecheckClosed, "reauditedAt": 0})
 	}
+	if query.CcUpdatedOpen {
+		conditions = append(conditions, bson.M{"status": models.RecheckOpen, "ccUpdatedAt": bson.M{"$gt": 0}})
+	}
 	return withAnd(program, conditions)
 }
 

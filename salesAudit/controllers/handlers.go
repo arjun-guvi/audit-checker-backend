@@ -205,7 +205,7 @@ func SendReminder(c *gin.Context) {
 // Rechecks
 
 // GetRechecks: GET /rechecks. Filters: scope=mine|all, status=open|closed,
-// view=raisedNotClosed|closedAuditPending|closed; comma lists (any of) category, auditorEmail,
+// view=raisedNotClosed|closedAuditPending|closed|ccUpdatedNotClosed; comma lists (any of) category, auditorEmail,
 // bdaEmail; search (recheck number, lead name, Zen ID, comments); leadId; raised*, closed* date
 // filters (…In presets or …From/…To).
 func GetRechecks(c *gin.Context) {
@@ -228,9 +228,11 @@ func GetRechecks(c *gin.Context) {
 		query.AwaitingReaudit = true
 	case "closed":
 		query.Status = models.RecheckClosed
+	case "ccUpdatedNotClosed":
+		query.CcUpdatedOpen = true
 	case "", "all":
 	default:
-		respondError(c, http.StatusBadRequest, "view must be raisedNotClosed, closedAuditPending or closed")
+		respondError(c, http.StatusBadRequest, "view must be raisedNotClosed, closedAuditPending, closed or ccUpdatedNotClosed")
 		return
 	}
 	who := member(c)

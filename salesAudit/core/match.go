@@ -82,6 +82,9 @@ func MatchRecheck(query models.RecheckQuery, recheck models.Recheck) bool {
 	if query.AwaitingReaudit && (recheck.Status != models.RecheckClosed || recheck.ReauditedAt != 0) {
 		return false
 	}
+	if query.CcUpdatedOpen && (recheck.Status != models.RecheckOpen || recheck.CcUpdatedAt == 0) {
+		return false
+	}
 	return true
 }
 

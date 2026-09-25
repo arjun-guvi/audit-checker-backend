@@ -155,6 +155,8 @@ Indexes: `{leadId, submittedAt}` (not unique, since there are many attempts per 
 | `closed` | `null` while open; then `{at, by{email, name, role}, note}`. The note says what was fixed |
 | `reauditedAt` | 0 until the lead is audited again after the close. "Closed · audit pending" means `status: closed` and `reauditedAt: 0` |
 | `alert`, `lastReminder` | The mail sent when it was raised, and the latest reminder mail: `{to, subject, trigger, sentAt}` |
+| `ccUpdatedAt` | Set on an open **CC recheck** (a *CC Pending* or *Missed points in CC* reason) when the import sees the lead's CC updated after the recheck was raised: the fix is in, but the ticket is still open. 0 otherwise |
+| `ccCloseAlert` | The last "CC updated, close the ticket" mail to the BDA and BDM |
 
 Filtering by category matches a recheck when **any** of its reasons has that category, and the BDA dashboard counts each reason under its own category.
 
@@ -298,6 +300,17 @@ Nothing about the lead changes. The side-by-side comparison is worked out on eve
 | `salesAuditEvents` | **I** `recheckClosed`, with who closed it |
 | `salesAuditNotifications`, `salesAuditAlerts` | **I** "Audit again" to the lead's auditor |
 
+#### CC updated, ticket left open
+
+If the ticket is a CC recheck and the BDA updates the CC in Zoho without closing the ticket, the next import (for a lead it already knew) does this:
+
+| Collection | What happens |
+|---|---|
+| `salesAuditRechecks` | **U** `ccUpdatedAt` = the lead's `cc.updatedAt`, and `ccCloseAlert` |
+| `salesAuditNotifications`, `salesAuditAlerts` | **I** "Close recheck RC-…: CC updated … ago" to the BDA and BDM |
+
+The hourly recheck sweep repeats that alert every 24h, with the time since the CC update, in place of the ordinary reminder, until the ticket is closed. `GET /rechecks?view=ccUpdatedNotClosed` lists these tickets.
+
 The auditor then goes back to step 3. The loop repeats until step 4a completes the audit.
 
 ### Background sweeps
@@ -308,7 +321,7 @@ The worker runs these on Redis (see README section 6).
 |---|---|---|
 | Escalation (hourly) | leads with an unverified payment for over 24h | `salesAuditAlerts` (mail to BDA, BDM, Accounts); lead `lastEscalationAt` |
 | Payment verification (every 10 min) | same | `salesAuditAlerts` (mail to the BDM, once); lead `paymentVerificationMailedAt` |
-| Recheck reminder (hourly) | rechecks open for over 24h | `salesAuditAlerts`; recheck `lastReminder` |
+| Recheck reminder (hourly) | rechecks open for over 24h | `salesAuditAlerts`; recheck `lastReminder`. For a CC recheck whose CC is updated: the CC close alert instead, recheck `ccCloseAlert` |
 | Send mail (queued) | `salesAuditAlerts` by id | `delivery` → `sent` / `failed` / `skipped` |
 
 ## 5. The lead's audit status

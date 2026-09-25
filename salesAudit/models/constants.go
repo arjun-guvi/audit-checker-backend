@@ -130,6 +130,8 @@ const (
 	NotifyRecheckRaised  = "recheckRaised"
 	NotifyRecheckClosed  = "recheckClosed"
 	NotifyCcUpdated      = "ccUpdated"
+	// NotifyCcTicketOpen: a CC recheck's CC was updated but the ticket is still open.
+	NotifyCcTicketOpen = "ccTicketOpen"
 )
 
 // Alert (mail log) kinds.
@@ -141,6 +143,7 @@ const (
 	AlertLeadsAssigned              = "leadsAssigned"
 	AlertCcUpdated                  = "ccUpdated"
 	AlertPaymentVerificationPending = "paymentVerificationPending"
+	AlertCcTicketOpen               = "ccTicketOpen"
 )
 
 const (

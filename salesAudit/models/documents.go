@@ -271,8 +271,13 @@ type Recheck struct {
 	ReauditedAt  int64           `bson:"reauditedAt" json:"reauditedAt"`
 	Alert        *Mail           `bson:"alert" json:"alert"`
 	LastReminder *Mail           `bson:"lastReminder" json:"lastReminder"`
-	Created      Created         `bson:"created" json:"-"`
-	Deleted      bool            `bson:"deleted" json:"-"`
+	// CcUpdatedAt is set on an open CC recheck (see core.IsCcRecheck) when the lead's CC was
+	// updated after it was raised: the fix is in, but the ticket still has to be closed. 0 otherwise.
+	CcUpdatedAt int64 `bson:"ccUpdatedAt" json:"ccUpdatedAt"`
+	// CcCloseAlert is the last "CC updated, close the ticket" mail to the BDA and BDM.
+	CcCloseAlert *Mail   `bson:"ccCloseAlert" json:"ccCloseAlert"`
+	Created      Created `bson:"created" json:"-"`
+	Deleted      bool    `bson:"deleted" json:"-"`
 }
 
 // RecheckReason is one thing to fix on a recheck.

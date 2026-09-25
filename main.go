@@ -9,6 +9,7 @@ import (
 	"auditApp/routes"
 	"auditApp/worker"
 
+	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	"github.com/gomodule/redigo/redis"
 )
@@ -67,6 +68,27 @@ func main() {
 
 	log.Printf("Starting HTTP server on port %s...", config.Port)
 	router := gin.Default()
+
+	router.Use(cors.New(cors.Config{
+		AllowOrigins: []string{
+			"https://auditor-client.vercel.app/",
+		},
+		AllowMethods: []string{
+			"GET",
+			"POST",
+			"PUT",
+			"PATCH",
+			"DELETE",
+			"OPTIONS",
+		},
+		AllowHeaders: []string{
+			"Origin",
+			"Content-Type",
+			"Authorization",
+		},
+		AllowCredentials: true,
+	}))
+
 	routes.SetupRoutes(router, redisPool, workerNamespace)
 	if err := router.Run(config.Host + ":" + config.Port); err != nil {
 		log.Fatal(err)

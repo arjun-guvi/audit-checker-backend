@@ -74,6 +74,13 @@ func importLearner(ctx context.Context, program string, learner models.ZohoLearn
 		return err
 	}
 	result.Rechecks += changed
+	// A new CC on a known lead (first one, or a new link): open CC rechecks raised before it are
+	// fixed and wait for the BDA to close them. A lead seen for the first time has no "before".
+	if existing.ID != "" && lead.Cc.Status == models.CcUpdated && lead.Cc.UpdatedAt != existing.Cc.UpdatedAt {
+		if err := flagCcRechecks(ctx, lead, now); err != nil {
+			return err
+		}
+	}
 	if changed > 0 || existing.ID == "" {
 		_, err = refreshWorkflow(ctx, lead)
 	}

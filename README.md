@@ -179,7 +179,7 @@ Date filters take either:
 | POST | `/leads/:leadId/reassign` | edit | auditors | `{auditorEmail}` |
 | POST | `/leads/:leadId/take-up` | edit | auditor | Take the lead over |
 | POST | `/leads/:leadId/send-reminder` | edit | auditors | Send the payment escalation mail now |
-| GET | `/rechecks` | view | scoped | Filters: `scope`, `status=open\|closed`, `view=raisedNotClosed\|closedAuditPending\|closed`; comma lists (any of) `category`, `auditorEmail`, `bdaEmail`; `search` (recheck number, lead name, Zen ID, comments); `leadId`, `raised…`, `closed…` |
+| GET | `/rechecks` | view | scoped | Filters: `scope`, `status=open\|closed`, `view=raisedNotClosed\|closedAuditPending\|closed\|ccUpdatedNotClosed`; comma lists (any of) `category`, `auditorEmail`, `bdaEmail`; `search` (recheck number, lead name, Zen ID, comments); `leadId`, `raised…`, `closed…` |
 | POST | `/rechecks` | edit | the lead's auditor, TL | `{leadId, reasons: [{category, comments}]}`, one reason per category (`{leadId, category, comments}` still works as one reason). Categories: `ccPending`, `payment`, `emi`, `approval`, `missedPointsInCc`, `downPayment` |
 | POST | `/rechecks/:recheckId/close` | edit | the lead's BDA / BDM, auditors | `{note}` |
 | GET | `/rechecks/cc-status?status=updated\|pending` | view | auditors | Leads by CC status (paged) |
@@ -228,7 +228,7 @@ The jobs are registered by `salesAudit/worker.Register(pool)` (gocraft/work on R
 | `salesAudit_zoho_import` | every 15 min | Fetches the sync window, imports it, then assigns unassigned leads |
 | `salesAudit_assign_leads` | on demand | Assignment only |
 | `salesAudit_escalation_sweep` | hourly | Mails the BDA, BDM and Accounts about leads with an unverified payment for over 24h; repeats daily |
-| `salesAudit_recheck_reminder_sweep` | hourly | Mails the BDA and BDM again about rechecks open for over 24h; repeats daily |
+| `salesAudit_recheck_reminder_sweep` | hourly | Mails the BDA and BDM again about rechecks open for over 24h; repeats daily. A CC recheck whose CC was updated after it was raised gets a "close the ticket" alert with the time since the CC update instead |
 | `salesAudit_payment_verification_sweep` | every 10 min | Mails the BDM once per lead about a payment unverified for over 24h |
 | `salesAudit_send_mail` | queued | Delivers one logged mail over SMTP |
 

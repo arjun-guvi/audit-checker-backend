@@ -160,3 +160,42 @@ func CloseRecheck(ctx context.Context, member models.Member, recheckID, note str
 	}
 	return recheck, nil
 }
+
+// flagCcRechecks marks the lead's open CC rechecks raised before its latest CC update, and asks
+// the BDA and BDM to close them.
+func flagCcRechecks(ctx context.Context, lead models.Lead, now int64) error {
+	rechecks, err := store.FindRechecks(ctx, lead.Program, models.RecheckQuery{LeadIDs: []string{lead.ID}, Status: models.RecheckOpen})
+	if err != nil {
+		return err
+	}
+	for _, recheck := range rechecks {
+		if !core.CcUpdatedSince(recheck, lead) {
+			continue
+		}
+		recheck.CcUpdatedAt = lead.Cc.UpdatedAt
+		recheck.CcCloseAlert = nil
+		if err := alertCcTicketOpen(ctx, &recheck, now); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// alertCcTicketOpen tells the BDA and BDM, in the portal and by mail, that the CC is updated but
+// the ticket is still open, with how long ago the CC was updated; then saves the recheck.
+func alertCcTicketOpen(ctx context.Context, recheck *models.Recheck, now int64) error {
+	elapsed := core.FormatElapsed(now - recheck.CcUpdatedAt)
+	Notify(ctx, recheck.Program, []string{recheck.BdaEmail, recheck.BdmEmail}, models.Notification{
+		Type: models.NotifyCcTicketOpen, LeadID: recheck.LeadID, RecheckID: recheck.ID,
+		Title:   fmt.Sprintf("Close recheck %s: CC updated %s ago", recheck.RecheckNo, elapsed),
+		Message: fmt.Sprintf("The CC for %s is updated but the ticket is still open. Close it so the lead can be audited again.", recheck.LeadName),
+		Created: models.Created{By: models.SystemUser},
+	})
+	mail, err := Mail(ctx, recheck.Program, models.SystemUser, recheck.LeadID, models.AlertCcTicketOpen, models.TriggerAuto,
+		[]string{recheck.BdaEmail, recheck.BdmEmail}, core.CcCloseAlertSubject(*recheck, now), core.CcCloseAlertBody(*recheck, now))
+	if err != nil {
+		return err
+	}
+	recheck.CcCloseAlert = &mail
+	return store.ReplaceRecheck(ctx, *recheck)
+}

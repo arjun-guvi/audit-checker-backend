@@ -50,9 +50,10 @@ func PaymentVerificationDue(lead models.Lead, now int64) bool {
 	return false
 }
 
-// RecheckReminderDue: open, and 24h since it was raised or last reminded.
+// RecheckReminderDue: open, and 24h since it was raised or last reminded. A CC recheck whose CC
+// is already updated gets the CC close alert instead (CcCloseAlertDue).
 func RecheckReminderDue(recheck models.Recheck, now int64) bool {
-	if recheck.Status != models.RecheckOpen {
+	if recheck.Status != models.RecheckOpen || recheck.CcUpdatedAt != 0 {
 		return false
 	}
 	last := recheck.RaisedAt
@@ -100,6 +101,49 @@ func RecheckSubject(recheck models.Recheck) string {
 
 func RecheckReminderSubject(recheck models.Recheck) string {
 	return fmt.Sprintf("Reminder: recheck %s still open after 24h: %s", recheck.RecheckNo, recheck.LeadName)
+}
+
+// IsCcRecheck: one of the recheck's reasons is about the CC (not done, or points missed in it), so
+// the BDA fixes it by updating the CC.
+func IsCcRecheck(recheck models.Recheck) bool {
+	for _, reason := range ReasonsOf(recheck) {
+		if reason.Category == models.CategoryCcPending || reason.Category == models.CategoryMissedPointsInCc {
+			return true
+		}
+	}
+	return false
+}
+
+// CcUpdatedSince: an open CC recheck raised before the lead's latest CC update.
+func CcUpdatedSince(recheck models.Recheck, lead models.Lead) bool {
+	return recheck.Status == models.RecheckOpen && IsCcRecheck(recheck) &&
+		lead.Cc.Status == models.CcUpdated && lead.Cc.UpdatedAt > recheck.RaisedAt
+}
+
+// CcCloseAlertDue: the CC is updated but the ticket is still open, and it is 24h since the last
+// close alert.
+func CcCloseAlertDue(recheck models.Recheck, now int64) bool {
+	return recheck.Status == models.RecheckOpen && recheck.CcUpdatedAt != 0 &&
+		(recheck.CcCloseAlert == nil || now-recheck.CcCloseAlert.SentAt >= RemailAfterSeconds)
+}
+
+// FormatElapsed is a duration in words: "2d 3h", "5h 12m", "12m".
+func FormatElapsed(seconds int64) string {
+	minutes := max(seconds, 0) / 60
+	days, hours := minutes/(24*60), minutes/60%24
+	switch {
+	case days > 0:
+		return fmt.Sprintf("%dd %dh", days, hours)
+	case hours > 0:
+		return fmt.Sprintf("%dh %dm", hours, minutes%60)
+	default:
+		return fmt.Sprintf("%dm", minutes)
+	}
+}
+
+func CcCloseAlertSubject(recheck models.Recheck, now int64) string {
+	return fmt.Sprintf("Close recheck %s: CC updated %s ago, ticket still open: %s",
+		recheck.RecheckNo, FormatElapsed(now-recheck.CcUpdatedAt), recheck.LeadName)
 }
 
 func RecheckClosedSubject(recheck models.Recheck) string {
@@ -254,6 +298,22 @@ func LeadsAssignedBody(leads []models.Lead) string {
 func CcUpdatedBody(lead models.Lead) string {
 	return fmt.Sprintf(`<p>Hi,</p><p>The CC for <b>%s</b> (Zen ID %s) is now updated in Zoho. It can be verified now.</p>`,
 		html.EscapeString(leadName(lead)), html.EscapeString(lead.ZenID)) + mailFooter
+}
+
+// CcCloseAlertBody asks the BDA and BDM to close a CC recheck whose CC is already updated.
+func CcCloseAlertBody(recheck models.Recheck, now int64) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, `<p>Hi,</p><p style="color:#C62828"><b>The CC for %s was updated %s ago, but recheck %s is still open.</b></p><p>The auditor can only audit the lead again once the ticket is closed. Please close it in the Sales Audit portal and say what was fixed.</p>`,
+		html.EscapeString(recheck.LeadName), html.EscapeString(FormatElapsed(now-recheck.CcUpdatedAt)), html.EscapeString(recheck.RecheckNo))
+	b.WriteString(table(
+		[2]string{"Recheck ID", recheck.RecheckNo},
+		[2]string{"Reasons", ReasonLabels(ReasonsOf(recheck))},
+		[2]string{"Raised at", FormatTime(recheck.RaisedAt) + " IST"},
+		[2]string{"CC updated at", FormatTime(recheck.CcUpdatedAt) + " IST"},
+		[2]string{"Zen ID", recheck.ZenID},
+	))
+	b.WriteString(mailFooter)
+	return b.String()
 }
 
 // TestMailBody is the body of POST /test-mail.

@@ -60,7 +60,8 @@ func SendReminder(ctx context.Context, member models.Member, leadID string) (mod
 }
 
 // RunRecheckReminderSweep re-mails the BDA and BDM about every recheck still open 24h after it was
-// raised or last reminded. Returns reminders sent.
+// raised or last reminded; a CC recheck whose CC is already updated gets the CC close alert
+// (with the time since the CC update) instead. Returns reminders sent.
 func RunRecheckReminderSweep(ctx context.Context, program string) (int, error) {
 	rechecks, err := store.FindRechecks(ctx, program, models.RecheckQuery{Status: models.RecheckOpen})
 	if err != nil {
@@ -69,6 +70,13 @@ func RunRecheckReminderSweep(ctx context.Context, program string) (int, error) {
 	now := nowSeconds()
 	sent := 0
 	for _, recheck := range rechecks {
+		if core.CcCloseAlertDue(recheck, now) {
+			if err := alertCcTicketOpen(ctx, &recheck, now); err != nil {
+				return sent, err
+			}
+			sent++
+			continue
+		}
 		if !core.RecheckReminderDue(recheck, now) {
 			continue
 		}
