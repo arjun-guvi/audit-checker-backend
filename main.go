@@ -72,6 +72,7 @@ func main() {
 	router.Use(cors.New(cors.Config{
 		AllowOrigins: []string{
 			"https://auditor-client.vercel.app",
+			"http://localhost:5173",
 		},
 		AllowMethods: []string{
 			"GET",

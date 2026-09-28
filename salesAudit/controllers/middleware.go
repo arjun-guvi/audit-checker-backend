@@ -1,6 +1,7 @@
 package controllers
 
 import (
+	"fmt"
 	"log"
 	"net/http"
 	"strings"
@@ -23,6 +24,8 @@ func Auth() gin.HandlerFunc {
 			c.Abort()
 			return
 		}
+		fmt.Println("=====>", token)
+		fmt.Println("=====>", config.SalesAuditProgram)
 		c.Set("auth", token)
 		c.Set("program", config.SalesAuditProgram)
 		c.Next()
