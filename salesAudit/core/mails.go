@@ -303,7 +303,7 @@ func CcUpdatedBody(lead models.Lead) string {
 // CcCloseAlertBody asks the BDA and BDM to close a CC recheck whose CC is already updated.
 func CcCloseAlertBody(recheck models.Recheck, now int64) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, `<p>Hi,</p><p style="color:#C62828"><b>The CC for %s was updated %s ago, but recheck %s is still open.</b></p><p>The auditor can only audit the lead again once the ticket is closed. Please close it in the Sales Audit portal and say what was fixed.</p>`,
+	fmt.Fprintf(&b, `<p>Hi,</p><p style="color:#C62828"><b>The CC for %s was updated %s ago, but recheck %s is still open.</b></p><p>The audit coordinator can only audit the lead again once the ticket is closed. Please close it in the Sales Audit portal and say what was fixed.</p>`,
 		html.EscapeString(recheck.LeadName), html.EscapeString(FormatElapsed(now-recheck.CcUpdatedAt)), html.EscapeString(recheck.RecheckNo))
 	b.WriteString(table(
 		[2]string{"Recheck ID", recheck.RecheckNo},

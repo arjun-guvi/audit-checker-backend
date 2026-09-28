@@ -45,3 +45,6 @@ Thumbs.db
 
 # Temporary files
 *.bak
+
+# Local reference: Zoho fields the portal would need but the learner API doesn't send
+ZOHO_MISSING_FIELDS.md

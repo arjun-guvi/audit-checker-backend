@@ -3,6 +3,7 @@
 package controllers
 
 import (
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -55,6 +56,26 @@ func queryRanges(c *gin.Context, names ...string) (map[string]models.Range, bool
 	return result, true
 }
 
+// queryFilters reads the filters parameter (a JSON list of models.FieldFilter), answering 400
+// when it is malformed or names an unknown field or operator.
+func queryFilters(c *gin.Context) (leads, rechecks []models.FieldCondition, ok bool) {
+	raw := strings.TrimSpace(c.Query("filters"))
+	if raw == "" {
+		return nil, nil, true
+	}
+	filters := []models.FieldFilter{}
+	if err := json.Unmarshal([]byte(raw), &filters); err != nil {
+		respondError(c, http.StatusBadRequest, core.ErrBadFilters.Error())
+		return nil, nil, false
+	}
+	leads, rechecks, err := core.CompileFilters(filters, actions.Now())
+	if err != nil {
+		respondError(c, http.StatusBadRequest, err.Error())
+		return nil, nil, false
+	}
+	return leads, rechecks, true
+}
+
 // Me and members
 
 // GetMe: GET /me
@@ -94,9 +115,14 @@ func UpdateMember(c *gin.Context) {
 // GetLeads: GET /leads. Filters: scope=mine|all, auditStatus (comma list), region, auditorEmail,
 // bdaEmail, ccStatus, search, unassigned, page, pageSize; date filters completed*, recheckRaised*,
 // recheckClosed* (…In=today|thisWeek|lastWeek|thisMonth|lastMonth, or …From/…To Unix seconds);
-// recheckCategory, recheckStatus, awaitingReaudit.
+// recheckCategory, recheckStatus, awaitingReaudit; and filters, the filter sidebar's rules as a
+// JSON list of {field, op, value, value2} (see core.LeadFields and core.RecheckFields).
 func GetLeads(c *gin.Context) {
 	ranges, ok := queryRanges(c, "completed", "recheckRaised", "recheckClosed")
+	if !ok {
+		return
+	}
+	leadConditions, recheckConditions, ok := queryFilters(c)
 	if !ok {
 		return
 	}
@@ -110,6 +136,7 @@ func GetLeads(c *gin.Context) {
 			Search:        c.Query("search"),
 			Unassigned:    c.Query("unassigned") == "true",
 			Completed:     ranges["completed"],
+			Conditions:    leadConditions,
 			Page:          queryInt(c, "page"),
 			PageSize:      queryInt(c, "pageSize"),
 		},
@@ -119,6 +146,7 @@ func GetLeads(c *gin.Context) {
 		RecheckCategories: queryList(c, "recheckCategory"),
 		RecheckStatus:     c.Query("recheckStatus"),
 		AwaitingReaudit:   c.Query("awaitingReaudit") == "true",
+		RecheckConditions: recheckConditions,
 	}
 	page, err := actions.ListLeads(c, member(c), params)
 	reply(c, page, err)
@@ -128,7 +156,7 @@ func GetLeads(c *gin.Context) {
 func AssignLeads(c *gin.Context) {
 	who := member(c)
 	if !core.Can(who.Role, core.ActionRunAssignment) {
-		respondError(c, http.StatusForbidden, "Only the auditor TL can run the assignment")
+		respondError(c, http.StatusForbidden, "Only the audit coordinator TL can run the assignment")
 		return
 	}
 	result, err := actions.AssignPending(c, who.Program, core.ActorOf(who))
@@ -276,7 +304,7 @@ func CloseRecheck(c *gin.Context) {
 func GetCcStatus(c *gin.Context) {
 	who := member(c)
 	if !core.Can(who.Role, core.ActionViewCcStatus) {
-		respondError(c, http.StatusForbidden, "Only auditors can see the CC status")
+		respondError(c, http.StatusForbidden, "Only audit coordinators can see the CC status")
 		return
 	}
 	status := c.Query("status")
@@ -294,14 +322,19 @@ func GetCcStatus(c *gin.Context) {
 
 // Dashboards
 
-// GetTeamDashboard: GET /dashboard/auditor-team?auditorEmail=&periodIn=|periodFrom=&periodTo=
+// GetTeamDashboard: GET /dashboard/auditor-team?auditorEmail=&region=North|South&periodIn=|periodFrom=&periodTo=
 func GetTeamDashboard(c *gin.Context) {
 	span, err := queryRange(c, "period")
 	if err != nil {
 		respondError(c, http.StatusBadRequest, err.Error())
 		return
 	}
-	dashboard, err := actions.TeamDashboard(c, member(c), c.Query("auditorEmail"), span)
+	region := core.RegionOf(c.Query("region"))
+	if region == "" && strings.TrimSpace(c.Query("region")) != "" {
+		respondError(c, http.StatusBadRequest, "region must be North or South")
+		return
+	}
+	dashboard, err := actions.TeamDashboard(c, member(c), c.Query("auditorEmail"), region, span)
 	reply(c, dashboard, err)
 }
 
@@ -339,7 +372,7 @@ func ReadAllNotifications(c *gin.Context) {
 func requireTl(c *gin.Context) (models.Member, bool) {
 	who := member(c)
 	if who.Role != models.RoleAuditorTl {
-		respondError(c, http.StatusForbidden, "Only the auditor TL can do this")
+		respondError(c, http.StatusForbidden, "Only the audit coordinator TL can do this")
 		return who, false
 	}
 	return who, true

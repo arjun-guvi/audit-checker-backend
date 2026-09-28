@@ -11,6 +11,7 @@ import (
 	"auditApp/salesAudit/models"
 
 	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
@@ -162,6 +163,70 @@ func replaceMember(ctx context.Context, member models.Member) error {
 	return replaceOne(ctx, models.MembersCollection, scoped(member.Program, bson.M{"id": member.ID}), member)
 }
 
+// fieldCondition is a filter sidebar rule as a Mongo condition (see core.MatchTexts and
+// core.MatchNumber, which it must agree with). Text matches ignore case; 0 is an empty date.
+func fieldCondition(condition models.FieldCondition) bson.M {
+	path := condition.Path
+	if condition.Kind == core.KindDate || condition.Kind == core.KindNumber {
+		present := bson.M{"$nin": bson.A{0, nil}}
+		switch condition.Op {
+		case core.OpIsEmpty:
+			return bson.M{path: bson.M{"$in": bson.A{0, nil}}}
+		case core.OpIsNotEmpty:
+			return bson.M{path: present}
+		case core.CondRange:
+			if condition.HasFrom {
+				present["$gte"] = condition.From
+			}
+			if condition.HasTo {
+				present["$lt"] = condition.To
+			}
+			return bson.M{path: present}
+		}
+		outside := bson.A{}
+		if condition.HasFrom {
+			outside = append(outside, bson.M{path: bson.M{"$lt": condition.From}})
+		}
+		if condition.HasTo {
+			outside = append(outside, bson.M{path: bson.M{"$gte": condition.To}})
+		}
+		return bson.M{"$and": bson.A{bson.M{path: present}, bson.M{"$or": outside}}}
+	}
+	quoted := regexp.QuoteMeta(condition.Value)
+	pattern := func(expression string) primitive.Regex { return primitive.Regex{Pattern: expression, Options: "i"} }
+	switch condition.Op {
+	case core.OpIsEmpty:
+		return bson.M{path: bson.M{"$in": bson.A{"", nil}}}
+	case core.OpIsNotEmpty:
+		return bson.M{path: bson.M{"$nin": bson.A{"", nil}}}
+	case core.OpIs:
+		return bson.M{path: pattern("^" + quoted + "$")}
+	case core.OpIsNot:
+		return bson.M{path: bson.M{"$not": pattern("^" + quoted + "$")}}
+	case core.OpStartsWith:
+		return bson.M{path: pattern("^" + quoted)}
+	case core.OpEndsWith:
+		return bson.M{path: pattern(quoted + "$")}
+	case core.OpContains:
+		return bson.M{path: pattern(quoted)}
+	case core.OpNotContains:
+		return bson.M{path: bson.M{"$not": pattern(quoted)}}
+	case core.CondIn:
+		return bson.M{path: bson.M{"$in": condition.Values}}
+	case core.CondNotIn:
+		return bson.M{path: bson.M{"$nin": condition.Values}}
+	}
+	return bson.M{"id": bson.M{"$in": bson.A{}}}
+}
+
+func fieldConditions(conditions []models.FieldCondition) []bson.M {
+	result := []bson.M{}
+	for _, condition := range conditions {
+		result = append(result, fieldCondition(condition))
+	}
+	return result
+}
+
 // Leads
 
 func leadFilter(program string, query models.LeadQuery) bson.M {
@@ -196,6 +261,7 @@ func leadFilter(program string, query models.LeadQuery) bson.M {
 			{"personal.name": pattern}, {"personal.email": pattern}, {"personal.phone": pattern}, {"zenId": pattern},
 		}})
 	}
+	conditions = append(conditions, fieldConditions(query.Conditions)...)
 	return withAnd(program, conditions)
 }
 
@@ -313,6 +379,7 @@ func recheckFilter(program string, query models.RecheckQuery) bson.M {
 	if query.CcUpdatedOpen {
 		conditions = append(conditions, bson.M{"status": models.RecheckOpen, "ccUpdatedAt": bson.M{"$gt": 0}})
 	}
+	conditions = append(conditions, fieldConditions(query.Conditions)...)
 	return withAnd(program, conditions)
 }
 

@@ -31,7 +31,7 @@ func TeamStats(auditors []models.Member, leads []models.Lead, audits []models.Au
 	}
 	for _, auditor := range auditors {
 		stats := row(auditor.Email)
-		stats.Name, stats.Region, stats.Available = auditor.Name, auditor.Region, auditor.Available
+		stats.Name, stats.Region = auditor.Name, auditor.Region
 	}
 	for _, lead := range leads {
 		if lead.Assignment == nil || rows[strings.ToLower(lead.Assignment.AuditorEmail)] == nil {
@@ -65,7 +65,7 @@ func TeamStats(auditors []models.Member, leads []models.Lead, audits []models.Au
 	}
 
 	result := models.TeamDashboard{Auditors: []models.AuditorStats{}, Recent: []models.Audit{}}
-	result.Totals.Name, result.Totals.Daily = "All auditors", []models.DayCount{}
+	result.Totals.Name, result.Totals.Daily = "All audit coordinators", []models.DayCount{}
 	for _, key := range order {
 		stats := rows[key]
 		stats.Daily = []models.DayCount{}
@@ -147,4 +147,33 @@ func BdaStatsOf(bdas []models.Member, leads []models.Lead, rechecks []models.Rec
 
 func inWindow(span models.Range, at int64) bool {
 	return !IsSet(span) || InRange(span, at)
+}
+
+// AuditsOfLeads keeps the audits of those leads.
+func AuditsOfLeads(audits []models.Audit, leadIDs []string) []models.Audit {
+	ids := map[string]bool{}
+	for _, id := range leadIDs {
+		ids[id] = true
+	}
+	result := []models.Audit{}
+	for _, audit := range audits {
+		if ids[audit.LeadID] {
+			result = append(result, audit)
+		}
+	}
+	return result
+}
+
+// AuditorsInRegion keeps the region's own auditors and anyone else with figures there (an
+// auditor from another region who was given or audited one of its leads). The totals are
+// unchanged: the rows dropped are all zero.
+func AuditorsInRegion(rows []models.AuditorStats, region string) []models.AuditorStats {
+	result := []models.AuditorStats{}
+	for _, row := range rows {
+		worked := row.Assigned > 0 || row.AuditsDone > 0 || row.RechecksRaised > 0
+		if worked || strings.EqualFold(row.Region, region) {
+			result = append(result, row)
+		}
+	}
+	return result
 }

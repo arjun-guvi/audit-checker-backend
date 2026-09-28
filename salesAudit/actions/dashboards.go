@@ -10,10 +10,12 @@ import (
 )
 
 // TeamDashboard is GET /dashboard/auditor-team: the auditors under the TL (every auditor when none
-// has a manager set), optionally one auditor, in a date window.
-func TeamDashboard(ctx context.Context, member models.Member, auditorEmail string, span models.Range) (models.TeamDashboard, error) {
+// has a manager set), optionally one auditor, in a date window. With a region, only that region's
+// leads count, whichever auditor worked them: a South auditor's audit of a North lead shows under
+// North. The rows are that region's auditors plus anyone else who worked its leads.
+func TeamDashboard(ctx context.Context, member models.Member, auditorEmail, region string, span models.Range) (models.TeamDashboard, error) {
 	if !core.Can(member.Role, core.ActionTeamDashboard) {
-		return models.TeamDashboard{}, forbidden("Only the auditor TL can see the team dashboard")
+		return models.TeamDashboard{}, forbidden("Only the audit coordinator TL can see the team dashboard")
 	}
 	all, err := store.FindMembers(ctx, member.Program, models.RoleAuditor)
 	if err != nil {
@@ -41,7 +43,11 @@ func TeamDashboard(ctx context.Context, member models.Member, auditorEmail strin
 	for _, auditor := range auditors {
 		emails = append(emails, auditor.Email)
 	}
-	leads, _, err := store.FindLeads(ctx, member.Program, models.LeadQuery{})
+	leadQuery, recheckQuery := models.LeadQuery{}, models.RecheckQuery{Raised: span}
+	if region != "" {
+		leadQuery.Regions = []string{region}
+	}
+	leads, _, err := store.FindLeads(ctx, member.Program, leadQuery)
 	if err != nil {
 		return models.TeamDashboard{}, err
 	}
@@ -49,11 +55,22 @@ func TeamDashboard(ctx context.Context, member models.Member, auditorEmail strin
 	if err != nil {
 		return models.TeamDashboard{}, err
 	}
-	rechecks, err := store.FindRechecks(ctx, member.Program, models.RecheckQuery{Raised: span})
+	if region != "" {
+		recheckQuery.LeadIDs = []string{}
+		for _, lead := range leads {
+			recheckQuery.LeadIDs = append(recheckQuery.LeadIDs, lead.ID)
+		}
+		audits = core.AuditsOfLeads(audits, recheckQuery.LeadIDs)
+	}
+	rechecks, err := store.FindRechecks(ctx, member.Program, recheckQuery)
 	if err != nil {
 		return models.TeamDashboard{}, err
 	}
-	return core.TeamStats(auditors, leads, audits, rechecks, span), nil
+	dashboard := core.TeamStats(auditors, leads, audits, rechecks, span)
+	if region != "" {
+		dashboard.Auditors = core.AuditorsInRegion(dashboard.Auditors, region)
+	}
+	return dashboard, nil
 }
 
 // BdaDashboard is GET /dashboard/bda: a BDA's own figures, or a BDM's per BDA (optionally one).

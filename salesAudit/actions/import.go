@@ -69,7 +69,7 @@ func importLearner(ctx context.Context, program string, learner models.ZohoLearn
 		}
 	}
 
-	changed, err := importRechecks(ctx, lead, learner.RecheckDetails, now)
+	changed, err := importRechecks(ctx, lead, learner, now)
 	if err != nil {
 		return err
 	}
@@ -121,12 +121,18 @@ func announceCcUpdated(ctx context.Context, lead models.Lead, now int64) {
 	}
 }
 
-// importRechecks adds Zoho rechecks the portal has not seen and closes those Zoho has closed.
-// Returns how many changed.
-func importRechecks(ctx context.Context, lead models.Lead, zohoRechecks []models.ZohoRecheck, now int64) (int, error) {
+// importRechecks adds Zoho rechecks the portal has not seen and refreshes the Zoho rechecks it
+// has (reasons, and closing those Zoho has closed). Returns how many changed.
+func importRechecks(ctx context.Context, lead models.Lead, learner models.ZohoLearner, now int64) (int, error) {
 	changed := 0
-	for _, zohoRecheck := range zohoRechecks {
-		fresh, ok := core.RecheckFromZoho(lead.Program, lead, zohoRecheck, now)
+	latestClosed := core.LatestClosedZohoRecheck(learner.RecheckDetails)
+	resubmittedAt := core.ZohoSeconds(strings.TrimSpace(string(learner.ResubmitDateTime)))
+	for _, zohoRecheck := range learner.RecheckDetails {
+		resubmit := int64(0)
+		if strings.TrimSpace(string(zohoRecheck.SRID)) == latestClosed {
+			resubmit = resubmittedAt
+		}
+		fresh, ok := core.RecheckFromZoho(lead.Program, lead, zohoRecheck, resubmit, now)
 		if !ok {
 			continue
 		}
@@ -147,16 +153,20 @@ func importRechecks(ctx context.Context, lead models.Lead, zohoRechecks []models
 			}
 		case err != nil:
 			return changed, err
-		case existing.Source == models.SourceZoho && existing.Status == models.RecheckOpen && fresh.Status == models.RecheckClosed:
-			existing.Status = models.RecheckClosed
-			existing.Closed = &models.RecheckClosure{At: now, By: core.SystemActor, Note: "Closed in Zoho"}
-			if err := store.ReplaceRecheck(ctx, existing); err != nil {
+		case existing.Source == models.SourceZoho:
+			refreshed, updated, closedNow := core.RefreshZohoRecheck(existing, fresh, now)
+			if !updated {
+				continue
+			}
+			if err := store.ReplaceRecheck(ctx, refreshed); err != nil {
 				return changed, err
 			}
 			changed++
-			RecordEvent(ctx, lead.Program, lead.ID, models.EventRecheckClosed, core.SystemActor, now, map[string]any{
-				"recheckId": existing.ID, "recheckNo": existing.RecheckNo, "note": "Closed in Zoho", "source": models.SourceZoho,
-			})
+			if closedNow {
+				RecordEvent(ctx, lead.Program, lead.ID, models.EventRecheckClosed, core.SystemActor, now, map[string]any{
+					"recheckId": existing.ID, "recheckNo": existing.RecheckNo, "note": "Closed in Zoho", "source": models.SourceZoho,
+				})
+			}
 		}
 	}
 	return changed, nil

@@ -8,14 +8,14 @@ import (
 	"auditApp/salesAudit/models"
 )
 
-// AssignLeads spreads unassigned leads over the available auditors of each lead's region. Each
+// AssignLeads spreads unassigned leads over the auditors of each lead's region. Each
 // lead goes to the auditor with the fewest open leads (load, plus what this run already gave
 // them); ties are broken at random, so 80 South leads over two idle auditors split 40/40.
-// Leads whose region has no available auditor are left out. Returns lead id → auditor email.
+// Leads whose region has no auditor are left out. Returns lead id → auditor email.
 func AssignLeads(leads []models.Lead, auditors []models.Member, load map[string]int, rnd *rand.Rand) map[string]string {
 	byRegion := map[string][]string{}
 	for _, auditor := range auditors {
-		if auditor.Role == models.RoleAuditor && auditor.Available && !auditor.Deleted && auditor.Region != "" {
+		if auditor.Role == models.RoleAuditor && !auditor.Deleted && auditor.Region != "" {
 			byRegion[auditor.Region] = append(byRegion[auditor.Region], strings.ToLower(auditor.Email))
 		}
 	}

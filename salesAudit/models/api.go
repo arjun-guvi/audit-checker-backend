@@ -31,8 +31,41 @@ type LeadQuery struct {
 	Search        string
 	Completed     Range
 	Unassigned    bool
-	Page          int
-	PageSize      int
+	// Conditions are the filter sidebar's rules on lead fields; all must match.
+	Conditions []FieldCondition
+	Page       int
+	PageSize   int
+}
+
+// FieldFilter is one rule of the lead list's filter sidebar, as the client sends it: a field
+// (see core.LeadFields), an operator for the field's kind, and its value(s).
+type FieldFilter struct {
+	Field  string `json:"field"`
+	Op     string `json:"op"`
+	Value  string `json:"value"`
+	Value2 string `json:"value2"`
+}
+
+// FieldCondition is a FieldFilter resolved against a field and the clock (core.CompileFilters):
+// what the store matches. Op is one of the Cond* operators; dates and numbers use From/To.
+type FieldCondition struct {
+	Field  string
+	Path   string
+	Kind   string
+	Op     string
+	Value  string
+	Values []string
+	From   int64
+	To     int64
+	// HasFrom / HasTo say whether From / To bound the range (To is exclusive).
+	HasFrom bool
+	HasTo   bool
+}
+
+// LeadRow is a lead in the lead list, with its most recent recheck (nil when it has none).
+type LeadRow struct {
+	Lead          `bson:",inline"`
+	LatestRecheck *Recheck `json:"latestRecheck"`
 }
 
 // RecheckQuery filters rechecks.
@@ -52,6 +85,8 @@ type RecheckQuery struct {
 	AwaitingReaudit bool
 	// CcUpdatedOpen: open, and the lead's CC was updated after it was raised.
 	CcUpdatedOpen bool
+	// Conditions are the filter sidebar's rules on recheck fields; all must match.
+	Conditions []FieldCondition
 }
 
 // AuditQuery filters audit attempts.
@@ -131,7 +166,6 @@ type AuditorStats struct {
 	Email          string     `json:"email"`
 	Name           string     `json:"name"`
 	Region         string     `json:"region"`
-	Available      bool       `json:"available"`
 	Assigned       int        `json:"assigned"`
 	Pending        int        `json:"pending"`
 	AuditsDone     int        `json:"auditsDone"`

@@ -18,7 +18,7 @@ type AssignResult struct {
 	ByAuditor  map[string]int `json:"byAuditor"`
 }
 
-// AssignPending gives every unassigned lead to an available auditor of its region (see
+// AssignPending gives every unassigned lead to an auditor of its region (see
 // core.AssignLeads), then tells each auditor once, in the portal and by mail.
 func AssignPending(ctx context.Context, program string, actor models.Actor) (AssignResult, error) {
 	result := AssignResult{ByAuditor: map[string]int{}}
@@ -71,7 +71,7 @@ func AssignPending(ctx context.Context, program string, actor models.Actor) (Ass
 // Reassign is POST /leads/:leadId/reassign: moves the lead to another auditor.
 func Reassign(ctx context.Context, member models.Member, leadID, auditorEmail string) (models.Lead, error) {
 	if !core.Can(member.Role, core.ActionReassign) {
-		return models.Lead{}, forbidden("Only auditors can reassign leads")
+		return models.Lead{}, forbidden("Only audit coordinators can reassign leads")
 	}
 	lead, _, err := loadLead(ctx, member, leadID)
 	if err != nil {
@@ -90,10 +90,10 @@ func Reassign(ctx context.Context, member models.Member, leadID, auditorEmail st
 	return moveLead(ctx, member, lead, auditor.Email, models.AssignManual, models.EventReassigned)
 }
 
-// TakeUp is POST /leads/:leadId/take-up: an auditor takes a lead over (e.g. its auditor is away).
+// TakeUp is POST /leads/:leadId/take-up: an auditor takes a lead over from another auditor.
 func TakeUp(ctx context.Context, member models.Member, leadID string) (models.Lead, error) {
 	if !core.Can(member.Role, core.ActionTakeUp) {
-		return models.Lead{}, forbidden("Only auditors can take up leads")
+		return models.Lead{}, forbidden("Only audit coordinators can take up leads")
 	}
 	lead, _, err := loadLead(ctx, member, leadID)
 	if err != nil {

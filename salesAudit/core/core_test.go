@@ -11,7 +11,7 @@ import (
 )
 
 func auditor(email, region string) models.Member {
-	return models.Member{Email: email, Role: models.RoleAuditor, Region: region, Available: true}
+	return models.Member{Email: email, Role: models.RoleAuditor, Region: region}
 }
 
 func leadsIn(region string, count int, prefix string) []models.Lead {
@@ -45,12 +45,10 @@ func TestAssignLeadsSplitsByRegionAndBalances(t *testing.T) {
 	}
 }
 
-func TestAssignLeadsSkipsUnavailableAndUncoveredRegions(t *testing.T) {
-	away := auditor("away@example.com", models.RegionSouth)
-	away.Available = false
+func TestAssignLeadsSkipsUncoveredRegions(t *testing.T) {
 	plan := core.AssignLeads(
 		append(leadsIn(models.RegionSouth, 4, "s"), models.Lead{ID: "x", Region: ""}),
-		[]models.Member{away, auditor("busy@example.com", models.RegionSouth), auditor("idle@example.com", models.RegionSouth)},
+		[]models.Member{auditor("busy@example.com", models.RegionSouth), auditor("idle@example.com", models.RegionSouth)},
 		map[string]int{"busy@example.com": 10},
 		rand.New(rand.NewSource(1)),
 	)
@@ -188,7 +186,7 @@ func TestZohoMapping(t *testing.T) {
 	if lead.Admission["12thPercentage"] != "80" {
 		t.Fatalf("admission: %v", lead.Admission)
 	}
-	recheck, ok := core.RecheckFromZoho("p", lead, learner.RecheckDetails[0], 1000)
+	recheck, ok := core.RecheckFromZoho("p", lead, learner.RecheckDetails[0], 0, 1000)
 	if !ok || recheck.Category != models.CategoryMissedPointsInCc || recheck.Source != models.SourceZoho || recheck.RecheckNo != "SR-1" {
 		t.Fatalf("recheck: %+v", recheck)
 	}
@@ -220,5 +218,202 @@ func TestCompareFlagsMismatches(t *testing.T) {
 	}
 	if mismatches == 0 {
 		t.Fatal("the fee mismatch and missing course fields should count")
+	}
+}
+
+func TestZohoChunks(t *testing.T) {
+	day := func(d int) time.Time { return time.Date(2026, 9, d, 15, 0, 0, 0, core.IST) }
+	cases := []struct {
+		name     string
+		from, to time.Time
+		want     [][2]string
+	}{
+		{"exact", day(1), day(10), [][2]string{{"01-Sep-2026", "05-Sep-2026"}, {"06-Sep-2026", "10-Sep-2026"}}},
+		{"remainder", day(1), day(12), [][2]string{{"01-Sep-2026", "05-Sep-2026"}, {"06-Sep-2026", "10-Sep-2026"}, {"11-Sep-2026", "12-Sep-2026"}}},
+		{"one day", day(7), day(7), [][2]string{{"07-Sep-2026", "07-Sep-2026"}}},
+		{"backwards", day(7), day(6), [][2]string{}},
+		{"across months", day(29), time.Date(2026, 10, 2, 0, 0, 0, 0, core.IST), [][2]string{{"29-Sep-2026", "02-Oct-2026"}}},
+	}
+	for _, test := range cases {
+		got := core.ZohoChunks(test.from, test.to, 5)
+		if len(got) != len(test.want) {
+			t.Fatalf("%s: got %v, want %v", test.name, got, test.want)
+		}
+		for index := range got {
+			if got[index] != test.want[index] {
+				t.Fatalf("%s: got %v, want %v", test.name, got, test.want)
+			}
+		}
+	}
+	if got := core.ZohoChunks(day(1), day(30), 5); len(got) != 6 || got[5] != [2]string{"26-Sep-2026", "30-Sep-2026"} {
+		t.Fatalf("1..30 by 5: got %v", got)
+	}
+}
+
+func TestSalesPairsFromZoho(t *testing.T) {
+	learner := func(bda, bdm string) models.ZohoLearner {
+		return models.ZohoLearner{SaleOwner: models.ZohoValue(bda), SaleOwnerManager: models.ZohoValue(bdm)}
+	}
+	pairs := core.SalesPairsFromZoho([]models.ZohoLearner{
+		learner("Asha - BDA1@Example.com", "bdm1@example.com"),
+		learner("bda1@example.com", ""),
+		learner("bda2@example.com", "bdm1@example.com"),
+		learner("", "bdm2@example.com"),
+		learner("bda1@example.com", "bdm2@example.com"),
+		learner("", ""),
+	})
+	want := []core.SalesPair{
+		{BdaEmail: "bda1@example.com", BdmEmail: "bdm2@example.com"},
+		{BdaEmail: "bda2@example.com", BdmEmail: "bdm1@example.com"},
+		{BdaEmail: "", BdmEmail: "bdm2@example.com"},
+	}
+	if len(pairs) != len(want) {
+		t.Fatalf("got %+v", pairs)
+	}
+	for index := range want {
+		if pairs[index] != want[index] {
+			t.Fatalf("pair %d: got %+v, want %+v", index, pairs[index], want[index])
+		}
+	}
+}
+
+func TestFieldFiltersByKind(t *testing.T) {
+	now := time.Date(2026, 9, 24, 12, 0, 0, 0, core.IST) // a Thursday
+	day := func(y int, m time.Month, d int) int64 { return time.Date(y, m, d, 10, 0, 0, 0, core.IST).Unix() }
+	lead := models.Lead{
+		ZenID: "70045", Region: models.RegionNorth, EnrolledAt: day(2026, 9, 24),
+		Personal: models.LeadPersonal{Name: "Meena Learner"},
+		Course:   models.LeadCourse{OnboardingAt: day(2026, 8, 10)},
+	}
+	matches := func(field, op, value, value2 string) bool {
+		t.Helper()
+		leads, _, err := core.CompileFilters([]models.FieldFilter{{Field: field, Op: op, Value: value, Value2: value2}}, now)
+		if err != nil {
+			t.Fatalf("%s %s: %v", field, op, err)
+		}
+		return core.MatchLeadConditions(leads, lead)
+	}
+	text := []struct {
+		op, value string
+		want      bool
+	}{
+		{core.OpIs, "meena learner", true}, {core.OpIsNot, "Meena Learner", false},
+		{core.OpStartsWith, "MEENA", true}, {core.OpEndsWith, "learner", true}, {core.OpEndsWith, "meena", false},
+		{core.OpContains, "na le", true}, {core.OpNotContains, "karan", true}, {core.OpNotContains, "learn", false},
+		{core.OpIsEmpty, "", false}, {core.OpIsNotEmpty, "", true},
+	}
+	for _, c := range text {
+		if got := matches("name", c.op, c.value, ""); got != c.want {
+			t.Errorf("name %s %q = %v", c.op, c.value, got)
+		}
+	}
+	if !matches("ccLink", core.OpIsEmpty, "", "") || matches("ccLink", core.OpIsNotEmpty, "", "") {
+		t.Error("an empty CC link is empty")
+	}
+	if !matches("region", core.OpIs, "South,North", "") || matches("region", core.OpIsNot, "North", "") {
+		t.Error("enum is / is not take a list")
+	}
+
+	dates := []struct {
+		op, value, value2 string
+		want              bool
+	}{
+		{core.OpToday, "", "", true}, {core.OpYesterday, "", "", false}, {core.OpThisWeek, "", "", true},
+		{core.OpThisMonth, "", "", true}, {core.OpLastMonth, "", "", false}, {core.OpThisYear, "", "", true},
+		{core.OpNextYear, "", "", false}, {core.OpIs, "2026-09-24", "", true}, {core.OpIsNot, "2026-09-24", "", false},
+		{core.OpBefore, "2026-09-24", "", false}, {core.OpAfter, "2026-09-23", "", true},
+		{core.OpBetween, "2026-09-24", "2026-09-01", true}, {core.OpBetween, "2026-09-01", "2026-09-23", false},
+		{core.OpIsEmpty, "", "", false},
+	}
+	for _, c := range dates {
+		if got := matches("enrolledAt", c.op, c.value, c.value2); got != c.want {
+			t.Errorf("enrolledAt %s %q..%q = %v", c.op, c.value, c.value2, got)
+		}
+	}
+	if !matches("onboardingAt", core.OpLastMonth, "", "") || !matches("awaitingAt", core.OpIsEmpty, "", "") {
+		t.Error("other date fields")
+	}
+	// An empty date is neither in nor out of a window.
+	if matches("awaitingAt", core.OpIsNot, "2026-09-24", "") || matches("completedAt", core.OpBefore, "2030-01-01", "") {
+		t.Error("an empty date matched a window")
+	}
+
+	recheck := models.Recheck{RecheckNo: "SR-1203", Attempt: 2,
+		Reasons: []models.RecheckReason{{Category: models.CategoryPayment}, {Category: models.CategoryEmi}}}
+	recheckMatches := func(field, op, value string) bool {
+		t.Helper()
+		_, rechecks, err := core.CompileFilters([]models.FieldFilter{{Field: field, Op: op, Value: value}}, now)
+		if err != nil {
+			t.Fatalf("%s %s: %v", field, op, err)
+		}
+		return core.MatchRecheckConditions(rechecks, recheck)
+	}
+	if !recheckMatches("recheckNo", core.OpStartsWith, "sr-12") || !recheckMatches("recheckReason", core.OpIs, models.CategoryEmi) ||
+		recheckMatches("recheckReason", core.OpIsNot, models.CategoryPayment) || !recheckMatches("recheckAttempt", core.OpGreaterThan, "1") ||
+		!recheckMatches("recheckClosedAt", core.OpIsEmpty, "") {
+		t.Error("recheck fields")
+	}
+
+	for _, bad := range []models.FieldFilter{
+		{Field: "nope", Op: core.OpIs, Value: "x"},
+		{Field: "name", Op: core.OpToday},
+		{Field: "enrolledAt", Op: core.OpContains, Value: "x"},
+		{Field: "enrolledAt", Op: core.OpIs, Value: "24-09-2026"},
+		{Field: "name", Op: core.OpContains},
+		{Field: "enrolledAt", Op: core.OpBetween, Value: "2026-09-01"},
+	} {
+		if _, _, err := core.CompileFilters([]models.FieldFilter{bad}, now); err == nil {
+			t.Errorf("%+v compiled", bad)
+		}
+	}
+}
+
+func TestZohoRecheckReasonsAndResubmit(t *testing.T) {
+	lead := models.Lead{ID: "L1", Personal: models.LeadPersonal{Name: "A"}}
+	zoho := models.ZohoRecheck{SRID: "SR-9", TicketStatus: "Closed", AuditComments: "fix both",
+		RecheckDate: "2026-09-01 10:00:00", PendingList: []models.ZohoValue{"Payment", "EMI", "Unknown", "payment"}}
+	recheck, _ := core.RecheckFromZoho("p", lead, zoho, 0, 1000)
+	if len(recheck.Reasons) != 2 || recheck.Reasons[0].Category != models.CategoryPayment || recheck.Reasons[1].Category != models.CategoryEmi ||
+		recheck.Reasons[0].Comments != "fix both" || recheck.Category != models.CategoryPayment {
+		t.Fatalf("reasons: %+v", recheck.Reasons)
+	}
+	if recheck.Closed == nil || recheck.Closed.At != recheck.RaisedAt {
+		t.Fatalf("closed without a resubmit time: %+v", recheck.Closed)
+	}
+	resubmit := core.ZohoSeconds("2026-09-05 12:00:00")
+	withResubmit, _ := core.RecheckFromZoho("p", lead, zoho, resubmit, 1000)
+	if withResubmit.Closed.At != resubmit || withResubmit.ReauditedAt != resubmit {
+		t.Fatalf("resubmit time: %+v", withResubmit.Closed)
+	}
+
+	// A stored recheck from before gets the new reasons and resubmit time; an open one is closed.
+	stored := recheck
+	stored.Reasons = stored.Reasons[:1]
+	refreshed, changed, closedNow := core.RefreshZohoRecheck(stored, withResubmit, 2000)
+	if !changed || closedNow || len(refreshed.Reasons) != 2 || refreshed.Closed.At != resubmit {
+		t.Fatalf("refresh: changed=%v %+v", changed, refreshed)
+	}
+	if _, changed, _ := core.RefreshZohoRecheck(refreshed, withResubmit, 3000); changed {
+		t.Fatal("refreshing again changed it")
+	}
+	open := refreshed
+	open.Status, open.Closed = models.RecheckOpen, nil
+	closed, _, closedNow := core.RefreshZohoRecheck(open, withResubmit, 3000)
+	if !closedNow || closed.Closed.At != 3000 {
+		t.Fatalf("closing: %+v", closed.Closed)
+	}
+
+	latest := core.LatestClosedZohoRecheck([]models.ZohoRecheck{
+		{SRID: "SR-1", TicketStatus: "Closed", RecheckDate: "2026-09-01 10:00:00"},
+		{SRID: "SR-2", TicketStatus: "closed", RecheckDate: "2026-09-03 10:00:00"},
+		{SRID: "SR-3", TicketStatus: "Open", RecheckDate: "2026-09-04 10:00:00"},
+	})
+	if latest != "SR-2" {
+		t.Fatalf("latest closed: %q", latest)
+	}
+
+	learner := models.ZohoLearner{ZenID: "1", AwaitingDateTime: "2026-09-10 09:30:00"}
+	if got := core.LeadFromZoho(learner).Course.AwaitingAt; got != core.ZohoSeconds("2026-09-10 09:30:00") || got == 0 {
+		t.Fatalf("awaitingAt: %d", got)
 	}
 }

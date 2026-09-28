@@ -69,7 +69,6 @@ This explains how the Sales Audit feature stores its data in MongoDB, and which 
 | `role` | `auditorTl`, `auditor`, `bdm` or `bda` |
 | `region` | `North` or `South`, for auditors (assignment goes by region) |
 | `managerEmail` | Auditor → TL, BDA → BDM. This is how "my team" is worked out |
-| `available` | `false` takes an auditor out of auto-assignment |
 
 Indexes: `{program, email}` unique, `{program, userHash}`.
 
@@ -245,7 +244,7 @@ This is automatic after the import, or the TL uses *Assign unassigned leads* (`P
 
 | Collection | What happens |
 |---|---|
-| `salesAuditMembers` | **R** the available auditors, grouped by `region` |
+| `salesAuditMembers` | **R** the auditors, grouped by `region` |
 | `salesAuditLeads` | **R** the leads with `assignment: null`; each goes to the least-loaded auditor of its region (ties random). **U** `assignment`, and `audit.status` becomes `pending` |
 | `salesAuditEvents` | **I** `assigned` per lead |
 | `salesAuditNotifications`, `salesAuditAlerts` | **I** one digest per auditor ("40 new leads assigned to you") |
@@ -358,7 +357,144 @@ The import and the portal write different parts of a lead, so neither overwrites
 
 Zoho's own `auditCoordinator`, `auditStatus` and `recheckDetails` are only used **once**, when a lead is first imported, to set its starting state. After that the portal owns them, and nothing is written back to Zoho.
 
-## 7. How the code reaches the database
+## 7. Zoho data and how it maps to ours
+
+The Zoho record shape is `models.ZohoLearner` (`salesAudit/models/zoho.go`), and the mapping is in `salesAudit/core/zohomap.go`. If this section and those files disagree, the code is right.
+
+### Where the data comes from
+
+- **API:** `GET ZOHO_API_URL?publickey=ZOHO_API_PUBLIC_KEY&from=…&to=…` (`salesAudit/zoho/client.go`). The window is `ZOHO_API_FROM` / `ZOHO_API_TO` when both are set, otherwise the last `ZOHO_SYNC_LOOKBACK_DAYS` days (default 3) up to today, as IST dates in `DD-Mon-YYYY`.
+- **File:** `POST /zoho/import` with a body imports that JSON instead of calling Zoho. It must have the same shape the API returns.
+- **Backfill:** `POST /zoho/backfill {from, to}` calls the API once per 5-day window of the range (`core.ZohoChunks`), oldest first. Each window runs the same import as below, also adds BDA/BDM members (see [below](#bdas-and-bdms--salesauditmembers)), and sends no mails or notifications. This is how `audit_live` is filled (README, *Live data*).
+- **Response shape:** `{"result": [...]}`, `{"data": [...]}`, a bare list, or a single learner are all accepted. A record that can't be decoded is skipped (and logged) rather than failing the batch, and a learner without a `zenId` is counted as skipped.
+
+### How values are read
+
+Zoho is loose with types, so every scalar is read as text first (`models.ZohoValue`), then converted:
+
+| Kind | Rule |
+|---|---|
+| Text | Trimmed. `null`, objects and arrays become `""`; numbers and booleans are kept as written |
+| Amounts | `core.Amount`: `,` and a leading `₹` are dropped, then parsed as a number. Empty or unreadable → `0` |
+| Emails | `core.NormalizeEmail`: Zoho often sends `Name - email`, so only the part after the last ` - ` is kept, lower-cased |
+| Dates → Unix seconds | `core.ZohoSeconds`: RFC 3339, or one of `2006-01-02 15:04:05(.0)`, `2006-01-02`, `02-Jan-2006( 15:04:05)`, `01/02/06(06) 03:04:05 PM`, read as IST. Empty or unreadable → `0` |
+| Dates kept as text | Batch dates, payment / EMI / reminder dates and `course.enrolledOn` are stored exactly as Zoho sent them |
+
+### Learner → `salesAuditLeads`
+
+These are refreshed on **every** import (`core.LeadFromZoho`).
+
+| Zoho field | Lead field | Notes |
+|---|---|---|
+| `zenId` | `zenId` | The match key. Unique per program |
+| `superleapId` | `superleapId` | |
+| `salesTeam` | `region` | `north` → `North`, `south` → `South` (any case); anything else → `""`, and the lead can't be auto-assigned |
+| `salesFrom` | `salesFrom` | |
+| `Stage` | `stage` | Capital `S` in Zoho |
+| `status` | `zohoStatus` | |
+| `name` | `personal.name` | Repeated spaces collapsed |
+| `email` | `personal.email` | Lower-cased |
+| `phone` | `personal.phone` | Kept as text, even when Zoho sends a number |
+| `preferredLanguage` | `personal.preferredLanguage` | |
+| `product` | `course.product` | |
+| `modeOfStudy` | `course.modeOfStudy` | |
+| `dateOfEnrollment` | `course.enrolledOn` (text) **and** `enrolledAt` (seconds) | |
+| `onboardingDateTime` | `course.onboardingAt` | Seconds |
+| `awaitingDateTime` | `course.awaitingAt` | Seconds: when the learner reached the Awaiting Main Bootcamp stage |
+| `batchData.{batchName, batchType, language, startDate, endDate, startTime, status}` | `course.batch.{name, type, language, startDate, endDate, startTime, status}` | Text |
+| `crmLeadCreatedDate` | `crmCreatedAt` | Seconds |
+| `saleOwner` | `bdaEmail` | Normalised email |
+| `saleOwnerManager` | `bdmEmail` | Normalised email |
+| `onboardCoordinator` | `onboardCoordinator` | Normalised email |
+| `admissionDetails` | `admission` | Every key kept as is, values as text |
+| `terms&conditions` | `termsAccepted` | `true` only for `Yes` (any case) |
+| `source`, `medium`, `campaign`, `content`, `affiliateId` | `marketing.{source, medium, campaign, content, affiliateId}` | |
+| `confirmationCall` | `cc.link` | Also sets `cc.type` and `cc.status`, see below |
+| `paymenttype` | `payment.paymentType` | Lower-case `t` in Zoho |
+| `partialCategory` | `payment.partialCategory` | |
+| `courseFee` | `payment.courseFee` | Amount |
+| `totalPaid` | `payment.totalPaid` | Amount |
+| `balaceAmount` | `payment.balanceAmount` | Zoho's spelling (`balace`); amount |
+| `promoCode` | `payment.promoCode` | |
+| `willLeadPayinSameMonth` | `payment.payInSameMonth` | Text |
+| `zbCustomerId`, `zbInvoiceId` | `payment.zbCustomerId`, `payment.zbInvoiceId` | Zoho Books references |
+| *(worked out)* | `payment.ready`, `payment.shortfall`, `payment.verifiedAmount` | `core.WithPaymentReadiness`, from the records below |
+| *(import time)* | `zohoSyncedAt` | When this import ran |
+
+**The CC.** `cc.status` is `updated` when `confirmationCall` has a link and `pending` when it is empty. `cc.type` comes from the link (`core.CcTypeOf`): Superleap links, links with `recording` in them, and `.mp3` / `.wav` / `.m4a` / `.ogg` / `.aac` files are `recording`; Drive file links (`drive.google.com/file/d/…`) and `.pdf` files are `pdf`; anything else (Drive folders, Gmail threads) is `link`. `cc.updatedAt` is set to the import time when the CC first appears or its link changes, and kept otherwise.
+
+### Payment arrays
+
+Each Zoho array becomes an array under `payment`. Amounts are converted to numbers; everything else stays text.
+
+| Zoho array → lead field | Zoho field → our field |
+|---|---|
+| `financialDetails` → `payment.records` | `recordId` → `recordId`, `type` → `type`, `amount` → `amount`, `zbModeOfPayment` → `modeOfPayment`, `utrPaymentId` → `utrPaymentId`, `verified` → `verified`, `verifiedDate` → `verifiedDate`, `paymentDate` → `paymentDate`, `zbReceiptCreated` → `receiptMade` |
+| `EMIdetails` → `payment.emis` | `recordId` → `recordId`, `applicationId` → `applicationId`, `emiVendor` → `vendor`, `emiStatus` → `status`, `stage` → `stage`, `loanAmount` → `loanAmount`, `disbursalAmount` → `disbursalAmount`, `firstEMIamount` → `firstEmiAmount`, `tenorInMonth` → `tenorMonths`, `ROIinPercentage` → `roiPercent`, `applicationDate` → `applicationDate`, `applicationInTheNameOf` → `inTheNameOf` |
+| `CourseDiscountDetails` → `payment.discounts` | `requestedCourseFee` → `requestedCourseFee`, `actualCourseFee` → `actualCourseFee`, `discountValue` → `discountValue`, `requestedperson` → `requestedBy` (normalised email), `paymentType` → `paymentType`, `status` → `status` |
+| `partialReminders` → `payment.partialReminders` | `recordId` → `recordId`, `noOfPartial` → `noOfPartial`, `amount` → `amount`, `dueDate` → `dueDate`, `partialpaymentStatus` → `status`, `linkStatus` → `linkStatus`, `paidDateTime` → `paidAt` |
+| `subscriptionReminders` → `payment.subscriptions` | `recordId` → `recordId`, `noOfSubscription` → `noOfSubscription`, `amount` → `amount`, `dueDate` → `dueDate`, `paymentStatus` → `status` |
+
+A missing array is stored as `[]`, never `null`.
+
+### Starting workflow state (first import only)
+
+When a `zenId` is new, `core.NewLeadFromZoho` also uses these fields to set the lead's starting state. On later imports they are **ignored**, because the portal owns the workflow ([section 6](#6-who-owns-which-lead-fields)).
+
+| Zoho field | Lead field | Rule |
+|---|---|---|
+| `auditCoordinator` | `assignment.auditorEmail` | Normalised email. When set, the lead starts assigned with `mode: zoho` and `assignedBy: system`; when empty, `assignment` is `null` |
+| `auditCoordinatorAssignedDateTime` | `assignment.assignedAt` | Seconds; the import time when missing |
+| `auditStatus` | `audit.status` | `Completed` → `completed`, `Recheck Pending` → `recheckOpen`, otherwise `pending` if assigned, `unassigned` if not |
+| `auditCompletedDateTime` | `audit.completedAt`, `audit.lastAuditedAt` | Only for `completed`; the import time when missing. `completedBy` is the coordinator and `attempt` is `1` |
+
+It also writes the lead's opening events: `leadImported` (dated at `enrolledAt`, falling back to `crmCreatedAt`, then now), plus `assigned`, `ccUpdated` and `auditCompleted` where they apply.
+
+### `recheckDetails` → `salesAuditRechecks`
+
+Every import walks the learner's `recheckDetails` (`core.RecheckFromZoho`). An entry without an `SRID` is skipped.
+
+| Zoho field | Recheck field | Notes |
+|---|---|---|
+| `SRID` | `recheckNo` | The match key: a recheck with this number that isn't stored yet is inserted, with `source: zoho` |
+| `pendingList` | `reasons[].category`, `category` | One reason per recognised entry, in order and once each; `category` is the first. Recognised: `Confirmation Call` / `CC Pending` → `ccPending`, `Missed points on CC` / `Missed points in CC` → `missedPointsInCc`, `Payment` → `payment`, `EMI` → `emi`, `Approval` → `approval`, `Down Payment` → `downPayment`. None recognised → `payment` |
+| `auditComments` | `comments`, `reasons[0].comments` | On the first reason only |
+| `requestPerson` | `raisedBy` | Normalised email, role `auditor` |
+| `recheckDate` | `raisedAt` | Seconds; the import time when missing |
+| `recheckattempt` | `attempt` | Number; `0` when unreadable |
+| `ticketStatus` | `status` | `closed` (any case) → `closed`, anything else → `open` |
+| *(from the lead)* | `leadId`, `leadName`, `zenId`, `bdaEmail`, `bdmEmail`, `auditorEmail` | Copied from the lead as it is after this import |
+
+A Zoho recheck that is **already closed** when first seen gets `closed: {at, by: system "Zoho", note: "Closed in Zoho before the portal took over"}` and `reauditedAt` set to the same time, so old Zoho history doesn't show up as "Closed · audit pending". The time is the learner's `resubmitDateTime` for their most recently raised closed recheck (Zoho sends one resubmit time per learner, for the latest resubmission), and `raisedAt` for the others.
+
+On later imports a stored Zoho recheck is refreshed (`core.RefreshZohoRecheck`):
+- its `reasons`, `category` and `comments` follow `pendingList` and `auditComments`;
+- one still `open` is closed once Zoho shows `ticketStatus: closed`, with `closed: {at: now, by: system, note: "Closed in Zoho"}`;
+- one closed before the portal took over gets the resubmit time above once Zoho sends it.
+
+Nothing else on a stored recheck is updated from Zoho, and portal rechecks (`source: portal`) are never touched by the import. Re-running the backfill over old dates fills in `awaitingAt`, every reason, and the resubmit times.
+
+### BDAs and BDMs → `salesAuditMembers`
+
+Only the backfill does this; the regular import and the 15-minute sync don't (`actions.SyncSalesMembers`).
+
+| Zoho field | Member | Rule |
+|---|---|---|
+| `saleOwnerManager` | a `bdm` member | Added when no member has this email |
+| `saleOwner` | a `bda` member, `managerEmail` = `saleOwnerManager` | Added when missing. An existing `bda` whose `managerEmail` differs is moved to the BDM Zoho names now (windows run oldest first, so the latest wins) |
+
+Emails are normalised as on the lead, so `member.email` always equals `lead.bdaEmail` / `lead.bdmEmail`. An existing member with a different role (for example an auditor) is never changed. Members added here have `name` = email, `userHash: ""` (no sign-in until the TL sets it) and `created.by: system`.
+
+This is what the BDM → BDA → leads tree rests on:
+- a BDM's BDAs: members with `role: 'bda'` and `managerEmail` = the BDM (`core.TeamEmails`);
+- a BDA's leads: leads with `bdaEmail` = the BDA;
+- a BDM's leads: leads with `bdmEmail` = the BDM **or** `bdaEmail` in their BDAs (`core.ScopeFor`), i.e. every lead of every BDA under them.
+
+### Zoho fields we don't store
+
+`auditStatus`, `auditCoordinator`, `auditCoordinatorAssignedDateTime` and `auditCompletedDateTime` are used only on the first import, as above. Anything in a Zoho record that isn't listed in `models.ZohoLearner` is dropped when it is decoded; to keep a new Zoho field, add it there and map it in `core/zohomap.go`.
+
+## 8. How the code reaches the database
 
 ```
 controllers/ (HTTP) ──► actions/ (use cases) ──► store.X(...)  ──► store/mongo.go (Mongo)

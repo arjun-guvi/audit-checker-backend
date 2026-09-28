@@ -98,6 +98,7 @@ func LeadFromZoho(learner models.ZohoLearner) models.Lead {
 			},
 			EnrolledOn:   str(learner.DateOfEnrollment),
 			OnboardingAt: ZohoSeconds(str(learner.OnboardingDateTime)),
+			AwaitingAt:   ZohoSeconds(str(learner.AwaitingDateTime)),
 		},
 		Payment:       paymentFromZoho(learner),
 		Admission:     admission,
@@ -271,29 +272,63 @@ func MergeZoho(existing models.Lead, learner models.ZohoLearner, now int64) (lea
 	return lead, ccBecameUpdated
 }
 
-// CategoryFromZoho maps a recheckDetails pendingList entry to a recheck category.
+// CategoryFromZoho maps a recheckDetails pendingList to a recheck category: the first one
+// recognised, else payment.
 func CategoryFromZoho(pending []models.ZohoValue) string {
+	return CategoriesFromZoho(pending)[0]
+}
+
+// CategoriesFromZoho maps every recognised pendingList entry to a recheck category, once each and
+// in order; payment when none is recognised.
+func CategoriesFromZoho(pending []models.ZohoValue) []string {
+	categories := []string{}
 	for _, item := range pending {
-		switch strings.ToLower(str(item)) {
-		case "confirmation call", "cc pending":
-			return models.CategoryCcPending
-		case "missed points on cc", "missed points in cc":
-			return models.CategoryMissedPointsInCc
-		case "payment":
-			return models.CategoryPayment
-		case "emi":
-			return models.CategoryEmi
-		case "approval":
-			return models.CategoryApproval
-		case "down payment":
-			return models.CategoryDownPayment
+		category := categoryOfZohoItem(str(item))
+		if category != "" && !containsFold(categories, category) {
+			categories = append(categories, category)
 		}
 	}
-	return models.CategoryPayment
+	if len(categories) == 0 {
+		return []string{models.CategoryPayment}
+	}
+	return categories
+}
+
+func categoryOfZohoItem(item string) string {
+	switch strings.ToLower(item) {
+	case "confirmation call", "cc pending":
+		return models.CategoryCcPending
+	case "missed points on cc", "missed points in cc":
+		return models.CategoryMissedPointsInCc
+	case "payment":
+		return models.CategoryPayment
+	case "emi":
+		return models.CategoryEmi
+	case "approval":
+		return models.CategoryApproval
+	case "down payment":
+		return models.CategoryDownPayment
+	}
+	return ""
+}
+
+// reasonsFromZoho is one reason per pendingList category; the audit comments go on the first.
+func reasonsFromZoho(zoho models.ZohoRecheck) []models.RecheckReason {
+	reasons := []models.RecheckReason{}
+	for index, category := range CategoriesFromZoho(zoho.PendingList) {
+		reason := models.RecheckReason{Category: category}
+		if index == 0 {
+			reason.Comments = str(zoho.AuditComments)
+		}
+		reasons = append(reasons, reason)
+	}
+	return reasons
 }
 
 // RecheckFromZoho maps one recheckDetails entry of a lead; ok is false without an SRID.
-func RecheckFromZoho(program string, lead models.Lead, zoho models.ZohoRecheck, now int64) (models.Recheck, bool) {
+// resubmittedAt is Zoho's resubmitDateTime when this is the lead's latest closed recheck (0
+// otherwise): the closed recheck is taken as resubmitted then, else when it was raised.
+func RecheckFromZoho(program string, lead models.Lead, zoho models.ZohoRecheck, resubmittedAt, now int64) (models.Recheck, bool) {
 	srid := str(zoho.SRID)
 	if srid == "" {
 		return models.Recheck{}, false
@@ -319,21 +354,77 @@ func RecheckFromZoho(program string, lead models.Lead, zoho models.ZohoRecheck, 
 		BdmEmail:  lead.BdmEmail,
 		Created:   models.Created{At: now, By: models.SystemUser},
 	}
-	recheck.Reasons = []models.RecheckReason{{Category: recheck.Category, Comments: recheck.Comments}}
+	recheck.Reasons = reasonsFromZoho(zoho)
 	if lead.Assignment != nil {
 		recheck.AuditorEmail = lead.Assignment.AuditorEmail
 	}
 	if strings.EqualFold(str(zoho.TicketStatus), "closed") {
+		closedAt := FirstNonZero(resubmittedAt, raisedAt)
 		recheck.Status = models.RecheckClosed
 		recheck.Closed = &models.RecheckClosure{
-			At:   raisedAt,
+			At:   closedAt,
 			By:   models.Actor{Email: models.SystemUser, Name: "Zoho", Role: models.RoleSystem},
-			Note: "Closed in Zoho before the portal took over",
+			Note: ClosedBeforePortal,
 		}
 		// Zoho history: treat as already re-audited so it does not show as awaiting re-audit.
-		recheck.ReauditedAt = raisedAt
+		recheck.ReauditedAt = closedAt
 	}
 	return recheck, true
+}
+
+// ClosedBeforePortal is the note on a Zoho recheck that was already closed when first imported.
+const ClosedBeforePortal = "Closed in Zoho before the portal took over"
+
+// LatestClosedZohoRecheck is the SRID of the most recently raised closed recheck of a learner, the
+// one Zoho's resubmitDateTime belongs to; "" when none is closed.
+func LatestClosedZohoRecheck(rechecks []models.ZohoRecheck) string {
+	srid, latest := "", int64(-1)
+	for _, recheck := range rechecks {
+		if !strings.EqualFold(str(recheck.TicketStatus), "closed") || str(recheck.SRID) == "" {
+			continue
+		}
+		if raised := ZohoSeconds(str(recheck.RecheckDate)); raised > latest {
+			srid, latest = str(recheck.SRID), raised
+		}
+	}
+	return srid
+}
+
+// RefreshZohoRecheck brings a stored Zoho recheck up to date with Zoho: its reasons, and its
+// closure (closed now when Zoho closed it, or the resubmit time of one closed before the portal
+// took over). closedNow reports an open recheck being closed. Portal fields are kept.
+func RefreshZohoRecheck(existing, fresh models.Recheck, now int64) (recheck models.Recheck, changed, closedNow bool) {
+	recheck = existing
+	if !sameReasons(existing.Reasons, fresh.Reasons) {
+		recheck.Reasons, recheck.Category, recheck.Comments = fresh.Reasons, fresh.Category, fresh.Comments
+		changed = true
+	}
+	switch {
+	case existing.Status == models.RecheckOpen && fresh.Status == models.RecheckClosed:
+		recheck.Status = models.RecheckClosed
+		recheck.Closed = &models.RecheckClosure{At: now, By: SystemActor, Note: "Closed in Zoho"}
+		changed, closedNow = true, true
+	case existing.Closed != nil && fresh.Closed != nil && existing.Closed.Note == ClosedBeforePortal &&
+		existing.Closed.At != fresh.Closed.At:
+		closure := *existing.Closed
+		closure.At = fresh.Closed.At
+		recheck.Closed = &closure
+		recheck.ReauditedAt = fresh.ReauditedAt
+		changed = true
+	}
+	return recheck, changed, closedNow
+}
+
+func sameReasons(a, b []models.RecheckReason) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // FirstNonZero returns the first non-zero value.

@@ -162,13 +162,24 @@ Date filters take either:
 - a preset `…In=today|thisWeek|lastWeek|thisMonth|lastMonth` (IST; weeks start on Monday), or
 - `…From` / `…To` in Unix seconds.
 
+`GET /leads` also takes `filters`, the lead list's filter sidebar: a JSON list of `{field, op, value, value2}`, all of which must match. Fields and their kinds are in `core/leadfields.go`. For the recheck fields (`recheck…`), a lead matches when one of its rechecks matches every recheck rule.
+
+| Kind | Fields | Operators |
+|---|---|---|
+| text | `name`, `zenId`, `product`, `batch`, `salesFrom`, `auditorEmail`, `bdaEmail`, `onboardCoordinator`, `paymentType`, `ccLink`, `recheckNo`, `recheckComments`, `recheckRaisedBy` | `is`, `isNot`, `isEmpty`, `isNotEmpty`, `startsWith`, `endsWith`, `contains`, `notContains` (ignoring case) |
+| list | `region`, `ccStatus`, `auditStatus`, `recheckCategory`, `recheckReason`, `recheckStatus` | `is`, `isNot` (value is a comma list: any of / none of), `isEmpty`, `isNotEmpty` |
+| number | `recheckAttempt` | `is`, `isNot`, `lessThan`, `greaterThan`, `between`, `isEmpty`, `isNotEmpty` |
+| date | `enrolledAt`, `onboardingAt`, `awaitingAt`, `assignedAt`, `completedAt`, `recheckRaisedAt`, `recheckClosedAt` | `is`, `isNot`, `before`, `after`, `between` (values `YYYY-MM-DD`, IST days, both ends included), `isEmpty`, `isNotEmpty`, `yesterday`, `today`, `tomorrow`, `lastWeek`, `thisWeek`, `nextWeek`, `lastMonth`, `thisMonth`, `nextMonth`, `lastYear`, `thisYear`, `nextYear` |
+
+An unknown field, an operator the field doesn't take, or a missing value is a 400. An empty date is neither in nor out of a date window.
+
 | Method | Path | Permission | Who | What |
 |---|---|---|---|---|
 | GET | `/me` | view | all | The member, `permissions`, `teamEmails` |
 | GET | `/members?role=` | view | all | Roster |
-| POST | `/members` | edit | TL | Add a member `{name, email, userHash, role, region, managerEmail, available}` |
-| PUT | `/members/:memberId` | edit | TL; an auditor may flip their own `available` | Edit a member |
-| GET | `/leads` | view | scoped | Paged list. Filters: `scope=mine\|all`; comma lists (any of) `auditStatus`, `region`, `auditorEmail`, `bdaEmail`, `ccStatus`, `recheckCategory`; `search`, `unassigned`, `completed…`, `recheckRaised…`, `recheckClosed…`, `recheckStatus`, `awaitingReaudit`, `page`, `pageSize` |
+| POST | `/members` | edit | TL | Add a member `{name, email, userHash, role, region, managerEmail}` |
+| PUT | `/members/:memberId` | edit | TL | Edit a member |
+| GET | `/leads` | view | scoped | Paged list. Filters: `scope=mine\|all`; comma lists (any of) `auditStatus`, `region`, `auditorEmail`, `bdaEmail`, `ccStatus`, `recheckCategory`; `search`, `unassigned`, `completed…`, `recheckRaised…`, `recheckClosed…`, `recheckStatus`, `awaitingReaudit`, `page`, `pageSize`; `filters`, the filter sidebar's rules (below). Each row also carries `latestRecheck` (or `null`) |
 | POST | `/leads/assign` | edit | TL | Assign unassigned leads now |
 | GET | `/leads/:leadId` | view | scoped | The lead (personal, course, payment + discount, admission & T&C), its rechecks, its audits and the allowed `actions` |
 | GET | `/leads/:leadId/timeline` | view | scoped | Events, oldest first, with actor and time |
@@ -183,7 +194,7 @@ Date filters take either:
 | POST | `/rechecks` | edit | the lead's auditor, TL | `{leadId, reasons: [{category, comments}]}`, one reason per category (`{leadId, category, comments}` still works as one reason). Categories: `ccPending`, `payment`, `emi`, `approval`, `missedPointsInCc`, `downPayment` |
 | POST | `/rechecks/:recheckId/close` | edit | the lead's BDA / BDM, auditors | `{note}` |
 | GET | `/rechecks/cc-status?status=updated\|pending` | view | auditors | Leads by CC status (paged) |
-| GET | `/dashboard/auditor-team?auditorEmail=&period…` | view | TL | Per auditor: assigned, open, audits done, completed, rechecks raised, per-day counts; recent audits |
+| GET | `/dashboard/auditor-team?auditorEmail=&region=&period…` | view | TL | Per auditor: assigned, open, audits done, completed, rechecks raised, per-day counts; recent audits. `region` (North / South) counts only that region's leads, whichever auditor worked them |
 | GET | `/dashboard/bda?bdaEmail=&period…` | view | BDA, BDM | Leads, completed audits, rechecks (open / closed / by category), per BDA |
 | GET | `/notifications?unread=true` | view | all | `{items, unread}` |
 | POST | `/notifications/:notificationId/read` | edit | all | Mark one notification read |
@@ -208,7 +219,7 @@ Every query filters on `program` and `deleted: false`. The indexes are in `sales
 | Collection | Holds | Key fields |
 |---|---|---|
 | `salesAuditLeads` | One document per Zoho enrolment | `zenId` (unique), `region`, `personal`, `course{batch}`, `payment{records, emis, discounts, partialReminders, subscriptions, ready, shortfall}`, `admission`, `termsAccepted`, `bdaEmail`, `bdmEmail`, `cc{link, type, status, updatedAt}`, `assignment{auditorEmail, mode}`, `audit{status, attempt, completedAt, completedBy}`, `recheckSummary` |
-| `salesAuditMembers` | Who uses the feature | `userHash`, `email` (unique), `role`, `region`, `managerEmail`, `available` |
+| `salesAuditMembers` | Who uses the feature | `userHash`, `email` (unique), `role`, `region`, `managerEmail` |
 | `salesAuditAudits` | Each audit attempt | `leadId`, `attempt`, `auditor`, `outcome` (`completed` / `recheckRaised`), `checklist`, `comments`, `mismatchCount` |
 | `salesAuditRechecks` | Recheck tickets | `recheckNo` (unique: `RC-000123`, or Zoho's SRID), `source`, `leadId`, `category`, `comments`, `raisedBy`, `raisedAt`, `bdaEmail`, `bdmEmail`, `auditorEmail`, `status`, `closed{at, by{email, name, role}, note}`, `reauditedAt` |
 | `salesAuditEvents` | The lead timeline | `leadId`, `type`, `actor`, `at`, `data` |

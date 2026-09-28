@@ -26,7 +26,6 @@ type Member struct {
 	Role         string  `bson:"role" json:"role"`
 	Region       string  `bson:"region" json:"region"`
 	ManagerEmail string  `bson:"managerEmail" json:"managerEmail"`
-	Available    bool    `bson:"available" json:"available"`
 	Created      Created `bson:"created" json:"created"`
 	Deleted      bool    `bson:"deleted" json:"-"`
 }
@@ -87,6 +86,8 @@ type LeadCourse struct {
 	Batch        Batch  `bson:"batch" json:"batch"`
 	EnrolledOn   string `bson:"enrolledOn" json:"enrolledOn"`
 	OnboardingAt int64  `bson:"onboardingAt" json:"onboardingAt"`
+	// AwaitingAt is when the learner reached the Awaiting Main Bootcamp stage; 0 when unknown.
+	AwaitingAt int64 `bson:"awaitingAt" json:"awaitingAt"`
 }
 
 type Batch struct {

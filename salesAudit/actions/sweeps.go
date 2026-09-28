@@ -47,7 +47,7 @@ func escalate(ctx context.Context, program, by string, lead models.Lead, trigger
 // SendReminder is POST /leads/:leadId/send-reminder: the escalation mail, sent now by an auditor.
 func SendReminder(ctx context.Context, member models.Member, leadID string) (models.Lead, error) {
 	if !core.Can(member.Role, core.ActionSendReminder) {
-		return models.Lead{}, forbidden("Only auditors can send reminders")
+		return models.Lead{}, forbidden("Only audit coordinators can send reminders")
 	}
 	lead, _, err := loadLead(ctx, member, leadID)
 	if err != nil {
@@ -130,7 +130,7 @@ func ListAlerts(ctx context.Context, member models.Member, leadID string, since 
 		return store.FindAlerts(ctx, member.Program, []string{leadID}, "", since)
 	}
 	if !core.IsAuditRole(member.Role) {
-		return nil, forbidden("Only auditors can see the mail log")
+		return nil, forbidden("Only audit coordinators can see the mail log")
 	}
 	return store.FindAlerts(ctx, member.Program, nil, "", since)
 }

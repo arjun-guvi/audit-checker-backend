@@ -34,7 +34,7 @@ func ListRechecks(ctx context.Context, member models.Member, params RecheckListP
 // lead).
 func RaiseRecheck(ctx context.Context, member models.Member, leadID string, reasons []models.RecheckReason) (models.Recheck, error) {
 	if !core.Can(member.Role, core.ActionRaiseRecheck) {
-		return models.Recheck{}, forbidden("Only auditors can raise a recheck")
+		return models.Recheck{}, forbidden("Only audit coordinators can raise a recheck")
 	}
 	lead, _, err := loadLead(ctx, member, leadID)
 	if err != nil {
@@ -121,7 +121,7 @@ func CloseRecheck(ctx context.Context, member models.Member, recheckID, note str
 		return recheck, err
 	}
 	if !core.CanCloseRecheck(member, team, recheck) {
-		return recheck, forbidden("Only the lead's BDA, BDM or an auditor can close this recheck")
+		return recheck, forbidden("Only the lead's BDA, BDM or an audit coordinator can close this recheck")
 	}
 	if recheck.Status != models.RecheckOpen {
 		return recheck, badRequest(core.ErrRecheckNotOpen)

@@ -64,6 +64,8 @@ type ZohoLearner struct {
 	AuditCoordinator       ZohoValue             `json:"auditCoordinator"`
 	AuditAssignedDateTime  ZohoValue             `json:"auditCoordinatorAssignedDateTime"`
 	AuditCompletedDateTime ZohoValue             `json:"auditCompletedDateTime"`
+	AwaitingDateTime       ZohoValue             `json:"awaitingDateTime"`
+	ResubmitDateTime       ZohoValue             `json:"resubmitDateTime"`
 	BatchData              ZohoBatch             `json:"batchData"`
 	AdmissionDetails       map[string]ZohoValue  `json:"admissionDetails"`
 	FinancialDetails       []ZohoFinancialDetail `json:"financialDetails"`

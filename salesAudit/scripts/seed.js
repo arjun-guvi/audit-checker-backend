@@ -17,7 +17,6 @@ const member = (email, name, role, region, managerEmail) => ({
   role,
   region,
   managerEmail,
-  available: true,
   created: { at: now, by: 'seed' },
   deleted: false,
 })

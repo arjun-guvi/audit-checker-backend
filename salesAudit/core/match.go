@@ -44,7 +44,7 @@ func MatchLead(query models.LeadQuery, lead models.Lead) bool {
 			return false
 		}
 	}
-	return true
+	return MatchLeadConditions(query.Conditions, lead)
 }
 
 // MatchRecheck reports whether a recheck passes a recheck query.
@@ -85,7 +85,7 @@ func MatchRecheck(query models.RecheckQuery, recheck models.Recheck) bool {
 	if query.CcUpdatedOpen && (recheck.Status != models.RecheckOpen || recheck.CcUpdatedAt == 0) {
 		return false
 	}
-	return true
+	return MatchRecheckConditions(query.Conditions, recheck)
 }
 
 // MatchAudit reports whether an audit attempt passes an audit query.

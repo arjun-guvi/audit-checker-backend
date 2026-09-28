@@ -18,11 +18,14 @@ type LeadListParams struct {
 	RecheckCategories []string
 	RecheckStatus     string
 	AwaitingReaudit   bool
+	// RecheckConditions are the filter sidebar's rules on recheck fields: a lead passes when one
+	// of its rechecks passes them all (and the recheck filters above).
+	RecheckConditions []models.FieldCondition
 }
 
 func filtersRechecks(p LeadListParams) bool {
 	return core.IsSet(p.RecheckRaised) || core.IsSet(p.RecheckClosed) || len(p.RecheckCategories) > 0 ||
-		p.RecheckStatus != "" || p.AwaitingReaudit
+		p.RecheckStatus != "" || p.AwaitingReaudit || len(p.RecheckConditions) > 0
 }
 
 // scopeOf is what the member may see.
@@ -35,10 +38,10 @@ func scopeOf(ctx context.Context, member models.Member, mine bool) (models.Scope
 }
 
 // ListLeads is the All Leads / My Leads page for auditors and the leads list for BDAs and BDMs.
-func ListLeads(ctx context.Context, member models.Member, params LeadListParams) (models.Page[models.Lead], error) {
+func ListLeads(ctx context.Context, member models.Member, params LeadListParams) (models.Page[models.LeadRow], error) {
 	scope, _, err := scopeOf(ctx, member, params.Mine)
 	if err != nil {
-		return models.Page[models.Lead]{}, err
+		return models.Page[models.LeadRow]{}, err
 	}
 	query := params.Query
 	query.Scope = scope
@@ -46,9 +49,10 @@ func ListLeads(ctx context.Context, member models.Member, params LeadListParams)
 		rechecks, err := store.FindRechecks(ctx, member.Program, models.RecheckQuery{
 			Scope: scope, Status: params.RecheckStatus, Categories: params.RecheckCategories,
 			Raised: params.RecheckRaised, ClosedIn: params.RecheckClosed, AwaitingReaudit: params.AwaitingReaudit,
+			Conditions: params.RecheckConditions,
 		})
 		if err != nil {
-			return models.Page[models.Lead]{}, err
+			return models.Page[models.LeadRow]{}, err
 		}
 		query.LeadIDs = []string{}
 		seen := map[string]bool{}
@@ -64,7 +68,40 @@ func ListLeads(ctx context.Context, member models.Member, params LeadListParams)
 	}
 	query.Page = max(query.Page, 1)
 	leads, total, err := store.FindLeads(ctx, member.Program, query)
-	return models.Page[models.Lead]{Items: leads, Total: total, Page: query.Page, PageSize: query.PageSize}, err
+	if err != nil {
+		return models.Page[models.LeadRow]{}, err
+	}
+	rows, err := withLatestRechecks(ctx, member.Program, leads)
+	return models.Page[models.LeadRow]{Items: rows, Total: total, Page: query.Page, PageSize: query.PageSize}, err
+}
+
+// withLatestRechecks pairs each lead with its most recently raised recheck.
+func withLatestRechecks(ctx context.Context, program string, leads []models.Lead) ([]models.LeadRow, error) {
+	rows := make([]models.LeadRow, len(leads))
+	ids := make([]string, len(leads))
+	for i, lead := range leads {
+		rows[i].Lead = lead
+		ids[i] = lead.ID
+	}
+	if len(leads) == 0 {
+		return rows, nil
+	}
+	rechecks, err := store.FindRechecks(ctx, program, models.RecheckQuery{LeadIDs: ids})
+	if err != nil {
+		return nil, err
+	}
+	latest := map[string]models.Recheck{}
+	for _, recheck := range rechecks {
+		if current, seen := latest[recheck.LeadID]; !seen || recheck.RaisedAt > current.RaisedAt {
+			latest[recheck.LeadID] = recheck
+		}
+	}
+	for i := range rows {
+		if recheck, ok := latest[rows[i].ID]; ok {
+			rows[i].LatestRecheck = &recheck
+		}
+	}
+	return rows, nil
 }
 
 // loadLead fetches a lead the member may see.

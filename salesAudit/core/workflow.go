@@ -137,7 +137,7 @@ func LeadInScope(scope models.Scope, lead models.Lead) bool {
 // Errors the workflow returns; the handlers send them as 400/403.
 var (
 	ErrForbidden           = errors.New("You are not allowed to do this")
-	ErrNotAssigned         = errors.New("Only the lead's auditor or the auditor TL can audit this lead")
+	ErrNotAssigned         = errors.New("Only the lead's audit coordinator or the audit coordinator TL can audit this lead")
 	ErrAlreadyCompleted    = errors.New("This lead's audit is already completed")
 	ErrRecheckOpen         = errors.New("Close the open recheck before completing the audit")
 	ErrPaymentNotReady     = errors.New("This lead cannot be audited yet")
@@ -147,7 +147,7 @@ var (
 	ErrNoReasons           = errors.New("Add at least one reason")
 	ErrDuplicateReason     = errors.New("Each category can only be one reason")
 	ErrChecklistIncomplete = errors.New("Tick every checklist item before completing the audit")
-	ErrNotAnAuditor        = errors.New("That member is not an available auditor")
+	ErrNotAnAuditor        = errors.New("That member is not an audit coordinator")
 )
 
 // CanWorkOn: the lead's assigned auditor or any auditor TL may audit it.
@@ -174,7 +174,7 @@ func ActionsFor(member models.Member, lead models.Lead) models.Actions {
 	switch {
 	case !IsAuditRole(member.Role):
 	case !works:
-		actions.BlockedReason = "This lead is assigned to another auditor"
+		actions.BlockedReason = "This lead is assigned to another audit coordinator"
 	case status == models.AuditUnassigned:
 		actions.BlockedReason = "This lead is not assigned yet"
 	case status == models.AuditCompleted:

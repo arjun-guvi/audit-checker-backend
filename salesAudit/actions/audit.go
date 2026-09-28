@@ -30,7 +30,7 @@ func ccExtractOf(ctx context.Context, lead models.Lead) (models.CcExtract, bool,
 
 func requireAuditRole(member models.Member) error {
 	if !core.IsAuditRole(member.Role) {
-		return forbidden("Only auditors can open the audit")
+		return forbidden("Only audit coordinators can open the audit")
 	}
 	return nil
 }

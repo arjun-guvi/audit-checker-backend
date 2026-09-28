@@ -8,6 +8,7 @@ import (
 	"math/rand"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -48,7 +49,7 @@ func setup(t *testing.T) env {
 
 	member := func(email, role, region, manager string) models.Member {
 		return models.Member{ID: core.NewID(), Program: program, UserHash: "hash-" + email, Email: email, Name: email,
-			Role: role, Region: region, ManagerEmail: manager, Available: true}
+			Role: role, Region: region, ManagerEmail: manager}
 	}
 	data.Members = []models.Member{
 		member("tl@example.com", models.RoleAuditorTl, "", ""),
@@ -506,5 +507,197 @@ func TestCcUpdatedButTicketOpen(t *testing.T) {
 	call(e, "bdm@example.com", http.MethodGet, "/rechecks?view=ccUpdatedNotClosed", nil, &flagged)
 	if len(flagged) != 0 {
 		t.Fatalf("closed tickets are not flagged: %d", len(flagged))
+	}
+}
+
+func TestZohoBackfillInFiveDayWindows(t *testing.T) {
+	e := setup(t)
+	windows := [][2]string{}
+	fetch := zoho.Fetch
+	t.Cleanup(func() { zoho.Fetch = fetch })
+	zoho.Fetch = func(_ context.Context, from, to string) ([]models.ZohoLearner, error) {
+		windows = append(windows, [2]string{from, to})
+		if len(windows) > 1 {
+			return nil, nil
+		}
+		// Two BDAs, one BDM: the first learner is sold by one BDA, the other two by another.
+		owner := `"saleOwner":"bda@example.com","saleOwnerManager":"bdm@example.com"`
+		body := strings.Replace(zohoLearners(1, 2), owner, `"saleOwner":"Ravi - New.BDA@example.com","saleOwnerManager":"new.bdm@example.com"`, 1)
+		body = strings.ReplaceAll(body, owner, `"saleOwner":"new.bda2@example.com","saleOwnerManager":"New.BDM@example.com"`)
+		return zoho.Decode([]byte(body))
+	}
+
+	if code := call(e, "bda@example.com", http.MethodPost, "/zoho/backfill", map[string]string{"from": "2026-09-01", "to": "2026-09-12"}, nil); code != http.StatusForbidden {
+		t.Fatalf("a BDA backfilled: %d", code)
+	}
+	if code := call(e, "tl@example.com", http.MethodPost, "/zoho/backfill", map[string]string{"from": "2026-09-12", "to": "2026-09-01"}, nil); code != http.StatusBadRequest {
+		t.Fatalf("backwards range: %d", code)
+	}
+
+	var result actions.BackfillResult
+	if code := call(e, "tl@example.com", http.MethodPost, "/zoho/backfill", map[string]string{"from": "2026-09-01", "to": "2026-09-12"}, &result); code != http.StatusOK {
+		t.Fatalf("backfill: %d", code)
+	}
+	want := [][2]string{{"01-Sep-2026", "05-Sep-2026"}, {"06-Sep-2026", "10-Sep-2026"}, {"11-Sep-2026", "12-Sep-2026"}}
+	if fmt.Sprint(windows) != fmt.Sprint(want) || len(result.Chunks) != 3 || result.Failed != 0 {
+		t.Fatalf("windows %v, result %+v", windows, result)
+	}
+	first := result.Chunks[0]
+	if first.Fetched != 3 || first.Import.Created != 3 || first.Assignment.Assigned != 3 || first.Members.Created != 3 {
+		t.Fatalf("first window: %+v", first)
+	}
+
+	for _, email := range []string{"new.bda@example.com", "new.bda2@example.com"} {
+		bda, _ := findMember(e, email)
+		if bda.Role != models.RoleBda || bda.ManagerEmail != "new.bdm@example.com" || bda.UserHash != "" {
+			t.Fatalf("BDA from Zoho: %+v", bda)
+		}
+	}
+	bdms := 0
+	for index, member := range e.data.Members {
+		if member.Email == "new.bdm@example.com" {
+			bdms++
+			if member.Role != models.RoleBdm {
+				t.Fatalf("BDM from Zoho: %+v", member)
+			}
+			e.data.Members[index].UserHash = "hash-new.bdm@example.com" // linked to Zen, so it can sign in
+		}
+	}
+	if bdms != 1 {
+		t.Fatalf("%d BDM members for one BDM", bdms)
+	}
+
+	// The BDM's team is both BDAs, and the BDM sees every lead of both.
+	var me models.CurrentUser
+	call(e, "new.bdm@example.com", http.MethodGet, "/me", nil, &me)
+	if fmt.Sprint(me.TeamEmails) != "[new.bda@example.com new.bda2@example.com]" {
+		t.Fatalf("BDM team: %v", me.TeamEmails)
+	}
+	var page models.Page[models.Lead]
+	call(e, "new.bdm@example.com", http.MethodGet, "/leads", nil, &page)
+	if page.Total != 3 {
+		t.Fatalf("BDM sees %d leads, want 3", page.Total)
+	}
+	if len(e.data.Alerts) != 0 || len(e.data.Notifications) != 0 || len(*e.mails) != 0 {
+		t.Fatalf("backfill alerted: %d alerts, %d notifications, %d mails", len(e.data.Alerts), len(e.data.Notifications), len(*e.mails))
+	}
+}
+
+func findMember(e env, email string) (models.Member, bool) {
+	for _, member := range e.data.Members {
+		if member.Email == email {
+			return member, true
+		}
+	}
+	return models.Member{}, false
+}
+
+func TestTeamDashboardByRegion(t *testing.T) {
+	e := setup(t)
+	call(e, "tl@example.com", http.MethodPost, "/zoho/import", zohoLearners(2, 2), nil)
+	var north models.Lead
+	for _, lead := range e.data.Leads {
+		if lead.Region == models.RegionNorth {
+			north = lead
+		}
+	}
+	// A South auditor is given a North lead and raises a recheck on it.
+	if code := call(e, "tl@example.com", http.MethodPost, "/leads/"+north.ID+"/reassign", map[string]string{"auditorEmail": "south1@example.com"}, nil); code != http.StatusOK {
+		t.Fatalf("reassign: %d", code)
+	}
+	body := map[string]string{"leadId": north.ID, "category": models.CategoryPayment, "comments": "UTR missing"}
+	if code := call(e, "south1@example.com", http.MethodPost, "/rechecks", body, nil); code != http.StatusOK {
+		t.Fatalf("raise: %d", code)
+	}
+
+	rows := func(team models.TeamDashboard) map[string]models.AuditorStats {
+		byEmail := map[string]models.AuditorStats{}
+		for _, row := range team.Auditors {
+			byEmail[row.Email] = row
+		}
+		return byEmail
+	}
+	var team models.TeamDashboard
+	if code := call(e, "tl@example.com", http.MethodGet, "/dashboard/auditor-team?periodIn=thisMonth&region=north", nil, &team); code != http.StatusOK {
+		t.Fatalf("north dashboard: %d", code)
+	}
+	got := rows(team)
+	if team.Totals.Assigned != 2 || team.Totals.RechecksRaised != 1 || team.Totals.AuditsDone != 1 || len(team.Recent) != 1 {
+		t.Fatalf("north totals: %+v, recent %d", team.Totals, len(team.Recent))
+	}
+	if got["north@example.com"].Assigned != 1 || got["south1@example.com"].Assigned != 1 || got["south1@example.com"].RechecksRaised != 1 {
+		t.Fatalf("north rows: %+v", team.Auditors)
+	}
+	if _, shown := got["south2@example.com"]; shown || len(team.Auditors) != 2 {
+		t.Fatalf("north shows an auditor with nothing there: %+v", team.Auditors)
+	}
+
+	call(e, "tl@example.com", http.MethodGet, "/dashboard/auditor-team?periodIn=thisMonth&region=South", nil, &team)
+	if team.Totals.Assigned != 2 || team.Totals.RechecksRaised != 0 || len(team.Recent) != 0 {
+		t.Fatalf("south counts the North lead: %+v", team.Totals)
+	}
+	if _, shown := rows(team)["north@example.com"]; shown {
+		t.Fatalf("south shows the North auditor: %+v", team.Auditors)
+	}
+
+	if code := call(e, "tl@example.com", http.MethodGet, "/dashboard/auditor-team?region=East", nil, nil); code != http.StatusBadRequest {
+		t.Fatalf("unknown region: %d", code)
+	}
+}
+
+func TestLeadSidebarFilters(t *testing.T) {
+	e := setup(t)
+	call(e, "tl@example.com", http.MethodPost, "/zoho/import", zohoLearners(2, 2), nil)
+	var target models.Lead
+	for _, lead := range e.data.Leads {
+		if lead.ZenID == "1001" {
+			target = lead
+		}
+	}
+	body := map[string]string{"leadId": target.ID, "category": models.CategoryPayment, "comments": "UTR missing"}
+	if code := call(e, "tl@example.com", http.MethodPost, "/rechecks", body, nil); code != http.StatusOK {
+		t.Fatalf("raise: %d", code)
+	}
+	list := func(filters string) (models.Page[models.LeadRow], int) {
+		var page models.Page[models.LeadRow]
+		code := call(e, "tl@example.com", http.MethodGet, "/leads?filters="+url.QueryEscape(filters), nil, &page)
+		return page, code
+	}
+	cases := []struct {
+		filters string
+		want    int
+	}{
+		{`[{"field":"name","op":"startsWith","value":"learner 1"}]`, 1},
+		{`[{"field":"name","op":"notContains","value":"learner 1"}]`, 3},
+		{`[{"field":"zenId","op":"is","value":"1002"}]`, 1},
+		{`[{"field":"region","op":"is","value":"North"}]`, 2},
+		{`[{"field":"enrolledAt","op":"is","value":"2026-09-20"}]`, 4},
+		{`[{"field":"enrolledAt","op":"thisMonth"},{"field":"region","op":"isNot","value":"North"}]`, 2},
+		{`[{"field":"completedAt","op":"isEmpty"}]`, 4},
+		{`[{"field":"recheckComments","op":"contains","value":"utr"}]`, 1},
+		{`[{"field":"recheckStatus","op":"is","value":"open"},{"field":"recheckRaisedAt","op":"today"}]`, 1},
+		{`[{"field":"recheckStatus","op":"is","value":"closed"}]`, 0},
+	}
+	for _, c := range cases {
+		page, code := list(c.filters)
+		if code != http.StatusOK || page.Total != c.want {
+			t.Errorf("%s: %d, %d leads (want %d)", c.filters, code, page.Total, c.want)
+		}
+	}
+
+	// Each row carries its latest recheck.
+	page, _ := list(`[{"field":"zenId","op":"is","value":"1001"}]`)
+	if len(page.Items) != 1 || page.Items[0].LatestRecheck == nil || page.Items[0].LatestRecheck.Comments != "UTR missing" {
+		t.Fatalf("latest recheck: %+v", page.Items)
+	}
+	page, _ = list(`[{"field":"zenId","op":"is","value":"1002"}]`)
+	if len(page.Items) != 1 || page.Items[0].LatestRecheck != nil || page.Items[0].ZenID != "1002" {
+		t.Fatalf("no recheck: %+v", page.Items)
+	}
+
+	for _, bad := range []string{`{`, `[{"field":"nope","op":"is","value":"x"}]`, `[{"field":"name","op":"today"}]`} {
+		if _, code := list(bad); code != http.StatusBadRequest {
+			t.Errorf("%s: %d", bad, code)
+		}
 	}
 }
