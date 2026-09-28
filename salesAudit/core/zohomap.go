@@ -436,3 +436,38 @@ func FirstNonZero(values ...int64) int64 {
 	}
 	return 0
 }
+
+// SalesPair is a BDA and the BDM they report to, as Zoho names them on a learner. BdaEmail is ""
+// for a BDM seen on a learner with no BDA.
+type SalesPair struct {
+	BdaEmail string
+	BdmEmail string
+}
+
+// SalesPairsFromZoho lists each BDA once with the last BDM Zoho names for them (a learner with no
+// BDM keeps the one before), and each BDM seen on a learner with no BDA, in order of first
+// appearance.
+func SalesPairsFromZoho(learners []models.ZohoLearner) []SalesPair {
+	pairs := []SalesPair{}
+	index := map[string]int{}
+	for _, learner := range learners {
+		bda, bdm := NormalizeEmail(str(learner.SaleOwner)), NormalizeEmail(str(learner.SaleOwnerManager))
+		if bda == "" && bdm == "" {
+			continue
+		}
+		key := "bda:" + bda
+		if bda == "" {
+			key = "bdm:" + bdm
+		}
+		at, seen := index[key]
+		if !seen {
+			index[key] = len(pairs)
+			pairs = append(pairs, SalesPair{BdaEmail: bda, BdmEmail: bdm})
+			continue
+		}
+		if bdm != "" {
+			pairs[at].BdmEmail = bdm
+		}
+	}
+	return pairs
+}
